@@ -5,7 +5,7 @@ import type { TaskFileMapping } from "./schema";
 import { defaultDBData } from "./schema";
 import { ensureSyncMeta } from "./meta";
 import { migrateDB } from "./migrations";
-import { getTasks, getSettings } from "@/settings";
+import { getTasks, getSettings, updateSettings } from '@/settings';
 
 type MetaRow = SyncMeta & { key: "sync" };
 
@@ -14,25 +14,41 @@ class TickTickDB extends Dexie {
 	meta!: Table<MetaRow, "sync">;
 	mappings!: Table<TaskFileMapping, string>;
 
-	constructor() {
-		super("TickTickSync");
+	constructor(vaultName: string) {
+		super(vaultName + "TickTickSync");
 
-		this.version(2).stores({
-			tasks: "localId, taskId, updatedAt, file, deleted",
+		this.version(3).stores({
+			tasks: "localId, taskId, updatedAt, lastVaultSync, file, deleted",
 			meta: "key",
 			mappings: "id, taskId, file"
 		});
 	}
 }
 
-export const db = new TickTickDB();
+export let db: TickTickDB;
 
 export async function initDB() {
+	if (!db) {
+		db = new TickTickDB(getSettings().vaultName);
+	}
+
 	let rawMeta = await db.meta.get("sync");
+	const settings = getSettings();
 
 	if (!rawMeta) {
-		const meta = await ensureSyncMeta(structuredClone(defaultDBData.meta));
+		const meta = await ensureSyncMeta(structuredClone(defaultDBData.meta), {
+			deviceId: settings.deviceId,
+			deviceLabel: settings.deviceLabel
+		});
 		await db.meta.put({ ...meta, key: "sync" });
+		
+		// Update settings if they were empty
+		if (!settings.deviceId) {
+			updateSettings({
+				deviceId: meta.deviceId,
+				deviceLabel: meta.deviceLabel
+			});
+		}
 		
 		// Initial migration from old settings-based tasks
 		const oldTasks = getTasks();
@@ -68,6 +84,14 @@ export async function initDB() {
 	}
 
 	if (!rawMeta) return;
+
+	// Sync settings with DB meta (DB is source of truth for device identity)
+	if (settings.deviceId !== rawMeta.deviceId) {
+		updateSettings({
+			deviceId: rawMeta.deviceId,
+			deviceLabel: rawMeta.deviceLabel
+		});
+	}
 
 	const migrated = migrateDB({
 		meta: rawMeta,

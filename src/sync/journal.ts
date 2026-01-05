@@ -1,3 +1,5 @@
+import log from '@/utils/logger';
+
 type SyncEvent = {
 	timestamp: number;
 	deviceId: string;
@@ -24,7 +26,7 @@ export function logSyncEvent(
 		journal.shift();
 	}
 
-	console.debug("[TickTickSync]", action, details ?? "");
+	log.debug("[TickTickSync]", action, details ?? "");
 }
 
 export function getSyncJournal() {

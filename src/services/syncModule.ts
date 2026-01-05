@@ -929,6 +929,9 @@ export class SyncMan {
 
 		// Group tasks by file
 		const fileGroups: Map<string, { toAdd: ITask[], toUpdate: ITask[], toDelete: ITask[] }> = new Map();
+		const dbUpdates: { localId: string, changes: Partial<LocalTask> }[] = [];
+
+		const projectIdToFilepathCache: Map<string, string> = new Map();
 
 		for (const lt of tasks) {
 			const task = lt.task;
@@ -937,9 +940,16 @@ export class SyncMan {
 			let targetFile = lt.file;
 			if (!targetFile && matchesFilter && !lt.deleted) {
 				// Determine target file for new tasks
-				targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(task.projectId);
-				if (!targetFile) {
-					targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(getSettings().defaultProjectId);
+				if (projectIdToFilepathCache.has(task.projectId)) {
+					targetFile = projectIdToFilepathCache.get(task.projectId)!;
+				} else {
+					targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(task.projectId);
+					if (!targetFile) {
+						targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(getSettings().defaultProjectId);
+					}
+					if (targetFile) {
+						projectIdToFilepathCache.set(task.projectId, targetFile);
+					}
 				}
 			}
 
@@ -955,18 +965,35 @@ export class SyncMan {
 					group.toDelete.push(task);
 				}
 			} else if (matchesFilter) {
-				if (lt.file) {
-					group.toUpdate.push(task);
-				} else {
+				const isNew = !lt.file;
+				const hasChanged = lt.updatedAt > (lt.lastVaultSync || 0);
+				const fileMoved = lt.file && lt.file !== targetFile;
+
+				if (isNew) {
 					group.toAdd.push(task);
 					// Update Dexie with the chosen file
-					await db.tasks.update(lt.localId, { file: targetFile });
+					dbUpdates.push({ localId: lt.localId, changes: { file: targetFile, lastVaultSync: Date.now() } });
+				} else if (fileMoved) {
+					// Task moved to a different file (project change)
+					// We need to delete it from the old file and add it to the new one
+					const oldFile = lt.file;
+					if (!fileGroups.has(oldFile)) {
+						fileGroups.set(oldFile, { toAdd: [], toUpdate: [], toDelete: [] });
+					}
+					fileGroups.get(oldFile)!.toDelete.push(task);
+					
+					group.toAdd.push(task);
+					dbUpdates.push({ localId: lt.localId, changes: { file: targetFile, lastVaultSync: Date.now() } });
+				} else if (hasChanged) {
+					group.toUpdate.push(task);
+					dbUpdates.push({ localId: lt.localId, changes: { lastVaultSync: Date.now() } });
 				}
 			} else if (lt.file) {
 				// No longer matches filter, remove from vault
 				group.toDelete.push(task);
 			}
 		}
+		log.debug("FileGroups", JSON.stringify(fileGroups,null,4));
 
 		for (const [filePath, group] of fileGroups) {
 			const file = this.app.vault.getAbstractFileByPath(filePath);
@@ -979,7 +1006,7 @@ export class SyncMan {
 				// Clear the file field since it's gone from vault, but KEEP the record in Dexie as a tombstone
 				const lt = tasks.find(t => t.task.id === task.id);
 				if (lt) {
-					await db.tasks.update(lt.localId, { file: "" });
+					dbUpdates.push({ localId: lt.localId, changes: { file: "" } });
 				}
 			}
 
@@ -992,6 +1019,15 @@ export class SyncMan {
 			if (group.toAdd.length > 0) {
 				await this.plugin.fileOperation?.synchronizeToVault(filePath, group.toAdd, false);
 			}
+		}
+
+		// Bulk update DB at the end
+		if (dbUpdates.length > 0) {
+			await db.transaction("rw", db.tasks, async () => {
+				for (const update of dbUpdates) {
+					await db.tasks.update(update.localId, update.changes);
+				}
+			});
 		}
 	}
 

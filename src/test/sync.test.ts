@@ -53,9 +53,8 @@ describe('pullFromTickTick', () => {
 	it('should get task by taskId index', async () => {
 		const remoteTask = {
 			id: 'remote-task-id',
-			updatedAt: Date.now(),
-			lastModifiedBy: 'someone-else',
-			deleted: false,
+			modifiedTime: new Date().toISOString(),
+			deleted: 0,
 		};
 
 		mockApi.getUpdatedTasks.mockResolvedValue({ update: [remoteTask], delete: [] });
@@ -75,9 +74,8 @@ describe('pullFromTickTick', () => {
 	it('should include localId in put task', async () => {
 		const remoteTask = {
 			id: 'remote-task-id',
-			updatedAt: Date.now(),
-			lastModifiedBy: 'someone-else',
-			deleted: false,
+			modifiedTime: new Date().toISOString(),
+			deleted: 0,
 		};
 
 		mockApi.getUpdatedTasks.mockResolvedValue({ update: [remoteTask], delete: [] });
@@ -128,9 +126,8 @@ describe('pullFromTickTick', () => {
 	it('should handle updates with taskId instead of id', async () => {
 		const remoteTask = {
 			taskId: 'remote-task-id',
-			updatedAt: Date.now(),
-			lastModifiedBy: 'someone-else',
-			deleted: false,
+			modifiedTime: new Date().toISOString(),
+			deleted: 0,
 		};
 
 		mockApi.getUpdatedTasks.mockResolvedValue({ update: [remoteTask], delete: [] });

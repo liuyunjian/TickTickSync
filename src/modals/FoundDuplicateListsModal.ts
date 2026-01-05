@@ -3,7 +3,7 @@ import TickTickSync from '@/main';
 import { getSettings } from '@/settings';
 
 
-export class FoundDuplicatesModal extends Modal {
+export class FoundDuplicateListsModal extends Modal {
 	title = 'Duplicate Projects/Lists found';
 
 	message: string;

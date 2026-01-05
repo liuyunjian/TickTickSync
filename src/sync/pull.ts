@@ -3,7 +3,7 @@ import { resolveTaskConflict } from "./conflicts";
 import { logSyncEvent } from "./journal";
 import type { TickTickRestAPI } from '@/services/TicktickRestAPI';
 import type { LocalTask, SyncMeta } from "@/db/schema";
-import log from 'loglevel';
+import log from '@/utils/logger';
 
 export async function pullFromTickTick(
 	ticktickRestApi: TickTickRestAPI,
@@ -12,10 +12,17 @@ export async function pullFromTickTick(
 ) {
 
 	const { update, delete: deletedIds } = await ticktickRestApi.getUpdatedTasks(
-		fullSync ? meta.lastFullSync : meta.lastDeltaSync
+		fullSync ? 0 : meta.lastDeltaSync
 	);
 
 	let applied = 0;
+
+	// 1️⃣ Bulk fetch local tasks for all updates
+	const remoteIds = update.map(rt => rt.id || (rt as any).taskId).filter(Boolean);
+	const localTasks = await db.tasks.where("taskId").anyOf(remoteIds).toArray();
+	const localMap = new Map(localTasks.map(lt => [lt.taskId, lt]));
+
+	const toPut: LocalTask[] = [];
 
 	for (const rt of update) {
 		const remoteId = rt.id || (rt as any).taskId;
@@ -23,51 +30,57 @@ export async function pullFromTickTick(
 			log.warn("[TickTickSync] Invalid task in update", rt);
 			continue;
 		}
-		// Ignore our own echoes
-		if (rt.lastModifiedBy === meta.deviceId) continue;
 
-		const local = await db.tasks.where("taskId").equals(remoteId).first();
+		const local = localMap.get(remoteId);
+		const remoteUpdatedAt = rt.modifiedTime ? new Date(rt.modifiedTime).getTime() : Date.now();
+
+		// Ignore our own echoes
+		if (local && local.lastModifiedByDeviceId === meta.deviceId && remoteUpdatedAt <= local.updatedAt) {
+			continue;
+		}
 
 		const remoteLocalTask: LocalTask = {
 			localId: local?.localId ?? `tt:${remoteId}`,
 			taskId: remoteId,
 			task: rt,
-			updatedAt: rt.updatedAt,
-			lastModifiedByDeviceId: rt.lastModifiedBy ?? "ticktick",
+			updatedAt: remoteUpdatedAt,
+			lastModifiedByDeviceId: "ticktick",
 			file: local?.file ?? "",
 			source: "ticktick",
-			deleted: rt.deleted
+			deleted: rt.deleted === 1
 		};
 
 		const resolved = resolveTaskConflict(local, remoteLocalTask);
-
-		await db.tasks.put(resolved);
+		toPut.push(resolved);
 		applied++;
 	}
-	log.debug("[TickTickSync] deletedIds", deletedIds.length);
-	for (const taskIdOrObj of deletedIds) {
-		if (!taskIdOrObj) continue;
 
-		const id = typeof taskIdOrObj === 'string' ? taskIdOrObj : (taskIdOrObj as any).taskId || (taskIdOrObj as any).id;
-		if (!id || typeof id !== 'string') {
-			log.warn("[TickTickSync] Invalid taskId in deletedIds", taskIdOrObj);
-			continue;
+	if (toPut.length > 0) {
+		await db.tasks.bulkPut(toPut);
+	}
+
+	// 2️⃣ Handle deletions
+	const deletionIds = deletedIds.map(taskIdOrObj => {
+		if (!taskIdOrObj) return null;
+		return typeof taskIdOrObj === 'string' ? taskIdOrObj : (taskIdOrObj as any).taskId || (taskIdOrObj as any).id;
+	}).filter((id): id is string => !!id && typeof id === 'string');
+
+	if (deletionIds.length > 0) {
+		const localToDelete = await db.tasks.where("taskId").anyOf(deletionIds).toArray();
+		const toUpdateDeletion: LocalTask[] = [];
+
+		for (const local of localToDelete) {
+			if (!local.deleted) {
+				local.deleted = true;
+				local.updatedAt = Date.now();
+				local.lastModifiedByDeviceId = "ticktick";
+				toUpdateDeletion.push(local);
+				applied++;
+			}
 		}
 
-		let local;
-		try {
-			local = await db.tasks.where("taskId").equals(id).first();
-		} catch (err) {
-			console.error("Failed to get local task for deleted task", id, err);
-			continue;
-		}
-		if (local && !local.deleted) {
-			await db.tasks.update(local.localId, {
-				deleted: true,
-				updatedAt: Date.now(),
-				lastModifiedByDeviceId: "ticktick"
-			});
-			applied++;
+		if (toUpdateDeletion.length > 0) {
+			await db.tasks.bulkPut(toUpdateDeletion);
 		}
 	}
 	if (fullSync) {

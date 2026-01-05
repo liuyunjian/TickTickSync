@@ -39,8 +39,12 @@ import { DateMan } from '@/dateMan';
 
 //logging
 import log from '@/utils/logger';
+
+//database
 import { syncTickTickWithDexie } from '@/sync/sync';
 import { initDB } from '@/db/dexie';
+
+//tasks
 import type { ITask } from '@/api/types/Task';
 import { getTasksByLabel, upsertLocalTask } from '@/db/tasks';
 import { detectDeviceLabel, generateDeviceId } from '@/db/device';
@@ -152,17 +156,17 @@ export default class TickTickSync extends Plugin {
 			return false;
 		}
 
-		const devID = getSettings().deviceId;
-		const devLabel = getSettings().deviceLabel;
+		let devID = getSettings().deviceId;
+		let devLabel = getSettings().deviceLabel;
 		const devLabeLen = devLabel?.length;
-		log.debug(`Device ID: ${devID}, Device Label: ${devLabel}, len: ${devLabeLen}`);
+		log.debug("initializePlugin", `Device ID: ${devID}, Device Label: ${devLabel}`);
 		if (!getSettings().deviceId || getSettings().deviceId.length === 0 ) {
-			getSettings().deviceId = generateDeviceId();
+			devID = getSettings().deviceId = generateDeviceId();
 		}
 		if (!getSettings()?.deviceLabel || getSettings()?.deviceLabel.length === 0) {
-			getSettings().deviceLabel = await detectDeviceLabel();
+			devLabel = getSettings().deviceLabel = await detectDeviceLabel();
 		}
-
+		log.debug("initializePlugin, now: ", `Device ID: ${devID}, Device Label: ${devLabel}`);
 		const isProjectsSaved = await this.saveProjectsToCache();
 		if (!isProjectsSaved) {// invalid token or offline?
 			this.tickTickRestAPI = undefined;
@@ -410,6 +414,7 @@ export default class TickTickSync extends Plugin {
 
 
 		try {
+			updateSettings({vaultName: this.app.vault.getName()});
 			await this.initializePlugin();
 		} catch (error) {
 			log.error(`API Initialization Failed.( ${error})`);
@@ -436,11 +441,11 @@ export default class TickTickSync extends Plugin {
 			// log.debug("AppID", this.app.appId);
 			// log.debug("HostName", await this.getDefaultDeviceName())
 
-			const taskTitle = "Test Task" + await this.getDefaultDeviceName() + new Date().getTime() ;
-			const task1: ITask = {title: taskTitle,"projectId": "693c8f5c8f084d2444217218",				"tags": [
-					"ticktick",
-					"ohlook1"
-				] }
+			// const taskTitle = "Test Task" + await this.getDefaultDeviceName() + new Date().getTime() ;
+			// const task1: ITask = {title: taskTitle,"projectId": "693c8f5c8f084d2444217218",				"tags": [
+			// 		"ticktick",
+			// 		"ohlook1"
+			// 	] }
 			// const task2: ITask = {
 			// 	"projectId": "693c8f5c8f084d2444217218",
 			// 	"sortOrder": -7696581394433,
@@ -469,17 +474,19 @@ export default class TickTickSync extends Plugin {
 			// 	"childIds": [],
 			// 	"kind": "TEXT"
 			// }
+			//
+			// await upsertLocalTask(task1, {file: "", deviceId: "6b2c97e2-95b8-4a7a-9bbc-d93783b7bd25", source: "obsidian"} );
+			// // await upsertLocalTask(task2, {file: "", deviceId: "6b2c97e2-95b8-4a7a-9bbc-d93783b7bd25", source: "obsidian"} );
+			//
+			// if (this.tickTickRestAPI) {
+			// 	await syncTickTickWithDexie(this.tickTickRestAPI);
+			// }
+			// const tasks = await getTasksByLabel('#ohlook1');
+			// log.debug('Labeled Tasks are: ', tasks.map(t => ({ id: t.task.id, title: t.task.title })));
 
-			await upsertLocalTask(task1, {file: "", deviceId: "6b2c97e2-95b8-4a7a-9bbc-d93783b7bd25", source: "obsidian"} );
-			// await upsertLocalTask(task2, {file: "", deviceId: "6b2c97e2-95b8-4a7a-9bbc-d93783b7bd25", source: "obsidian"} );
 
-			if (this.tickTickRestAPI) {
-				await syncTickTickWithDexie(this.tickTickRestAPI);
-			}
-			const tasks = await getTasksByLabel('#ohlook1');
-			log.debug('Labeled Tasks are: ', tasks.map(t => ({ id: t.task.id, title: t.task.title })));
-
-
+			const vaultId = this.app.vault.getName();
+			log.debug(`Vault ID: ${vaultId}`);
 
 
 

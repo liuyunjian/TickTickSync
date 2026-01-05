@@ -18,6 +18,7 @@ export async function pushToTickTick(
 		.toArray();
 
 	let pushed = 0;
+	const toUpdateInDb: { localId: string, changes: Partial<LocalTask> }[] = [];
 
 	for (const task of dirty) {
 		// 1️⃣ Deletion
@@ -37,11 +38,17 @@ export async function pushToTickTick(
 			const created = await ticktickRestApi.createTask(task.task);
 
 			// 🔁 IMPORTANT: Persist returned ID
-			await db.tasks.update(task.localId, {
-				taskId: created.id,
-				task: created,
-				updatedAt: created.updatedAt
-			});
+			if (created) {
+				toUpdateInDb.push({
+					localId: task.localId,
+					changes: {
+						taskId: created.id,
+						task: created,
+						updatedAt: created.modifiedTime ? new Date(created.modifiedTime).getTime() : Date.now(),
+						lastModifiedByDeviceId: meta.deviceId
+					}
+				});
+			}
 
 			pushed++;
 			continue;
@@ -50,9 +57,27 @@ export async function pushToTickTick(
 		// 3️⃣ Existing task update
 		log.debug("[TickTickSync] Updating task", task.taskId);
 
-		await ticktickRestApi.updateTask(task.task);
+		const updated = await ticktickRestApi.updateTask(task.task);
+		if (updated) {
+			toUpdateInDb.push({
+				localId: task.localId,
+				changes: {
+					task: updated,
+					updatedAt: updated.modifiedTime ? new Date(updated.modifiedTime).getTime() : Date.now(),
+					lastModifiedByDeviceId: meta.deviceId
+				}
+			});
+		}
 
 		pushed++;
+	}
+
+	if (toUpdateInDb.length > 0) {
+		await db.transaction("rw", db.tasks, async () => {
+			for (const item of toUpdateInDb) {
+				await db.tasks.update(item.localId, item.changes);
+			}
+		});
 	}
 
 	logSyncEvent(meta.deviceId, "push:complete", { pushed });

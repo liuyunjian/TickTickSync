@@ -569,6 +569,26 @@ export class Tick {
 		}
 	}
 
+	async batchUpdate(payload: { add?: any[], update?: any[], delete?: any[] }): Promise<any> {
+		try {
+			const updatePayload = {
+				add: payload.add || [],
+				addAttachments: [],
+				delete: payload.delete || [],
+				deleteAttachments: [],
+				updateAttachments: [],
+				update: payload.update || []
+			};
+			const url = `${this.apiUrl}/${updateTaskEndPoint}`;
+			const response = await this.makeRequest('Batch Update', url, 'POST', updatePayload);
+			return response;
+		} catch (e) {
+			log.error('Batch Update failed: ', e);
+			this.setError('Batch Update', null, e);
+			return null;
+		}
+	}
+
 
 	async exportData(): Promise<string | null> {
 		try {

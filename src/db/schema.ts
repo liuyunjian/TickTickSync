@@ -16,6 +16,7 @@ export type LocalTask = {
 	task: ITask;
 
 	updatedAt: number;
+	lastVaultSync?: number;
 	lastModifiedByDeviceId: string;
 
 	deleted?: boolean;

@@ -101,7 +101,8 @@
 					on:change={async (e) => {
 							const checked = e.target.checked;
 							debugMode = checked; // Ensure local state stays in sync
-							updateSettings({ debugMode: checked });
+							const logLevel = getSettings().logLevel;
+							updateSettings({ debugMode: checked , logLevel: checked ? logLevel : 'info'});
 							await plugin.saveSettings();
 					  }}
 				/>

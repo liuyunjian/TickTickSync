@@ -2,7 +2,7 @@ import { App, type ListItemCache, Notice, TAbstractFile, TFile, TFolder } from '
 import TickTickSync from '@/main';
 import type { ITask } from '@/api/types/Task';
 import type { IProject } from '@/api/types//Project';
-import { FoundDuplicatesModal } from '@/modals/FoundDuplicatesModal';
+import { FoundDuplicateListsModal } from '@/modals/FoundDuplicateListsModal';
 import { getProjects, getSettings, getTasks, updateProjects, updateSettings, updateTasks, getDefaultFolder } from '@/settings';
 //Logging
 import log from '@/utils/logger';
@@ -31,11 +31,25 @@ const FILE_EXT = '.md';
 export class CacheOperation {
 	app: App;
 	plugin: TickTickSync;
+	private taskCache: Map<string, ITask> | null = null;
 
 	constructor(app: App, plugin: TickTickSync) {
 		//super(app,settings);
 		this.app = app;
 		this.plugin = plugin;
+	}
+
+	async fillTaskCache() {
+		try {
+			const tasks = await db.tasks.toArray();
+			this.taskCache = new Map(tasks.filter(lt => !!lt.taskId).map(lt => [lt.taskId, lt.task]));
+		} catch (error) {
+			log.error(`Error filling task cache: ${error}`);
+		}
+	}
+
+	clearTaskCache() {
+		this.taskCache = null;
 	}
 
 	async addTaskToMetadata(filepath: string, task: ITask) {
@@ -401,6 +415,9 @@ export class CacheOperation {
 	//Read the task with the specified id
 	async loadTaskFromCacheID(taskId?: string): Promise<ITask | undefined> {
 		if (!taskId) return undefined;
+		if (this.taskCache) {
+			return this.taskCache.get(taskId);
+		}
 		try {
 			const lt = await db.tasks.where("taskId").equals(taskId).first();
 			return lt?.task;
@@ -767,7 +784,7 @@ export class CacheOperation {
 	}
 
 	private async showFoundDuplicatesModal(app, plugin, projects: IProject[]) {
-		const myModal = new FoundDuplicatesModal(app, plugin, projects, (result) => {
+		const myModal = new FoundDuplicateListsModal(app, plugin, projects, (result) => {
 			const ret = result;
 		});
 		return await myModal.showModal();

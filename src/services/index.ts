@@ -102,6 +102,9 @@ export class TickTickService {
 
 	async synchronization(fullSync: boolean = false) {
 		try {
+			// Populate task cache for fast lookups during sync
+			await this.cacheOperation.fillTaskCache();
+
 			await doWithLock(LOCK_TASKS, async () => {
 				if (this.plugin.tickTickRestAPI) {
 					await syncTickTickWithDexie(this.plugin.tickTickRestAPI, fullSync);
@@ -111,6 +114,9 @@ export class TickTickService {
 			await this.syncFiles(false);
 		} catch (error) {
 			log.error('Error on synchronization: ', error);
+		} finally {
+			// Clear cache to free memory
+			this.cacheOperation.clearTaskCache();
 		}
 	}
 
@@ -444,44 +450,38 @@ export class TickTickService {
 		}
 
 		//Now do the task checking.
-		for (const fileKey in newFilesToSync) {
-			if (getSettings().debugMode) {
-				log.debug(fileKey);
-			}
+		await doWithLock(LOCK_TASKS, async () => {
+			for (const fileKey in newFilesToSync) {
+				if (getSettings().debugMode) {
+					log.debug(fileKey);
+				}
 
-			if (bForceUpdate ){
-				await doWithLock(LOCK_TASKS, async () => {
+				if (bForceUpdate) {
 					try {
 						await this.tickTickSync?.forceUpdates(fileKey);
 					} catch (error) {
-						log.error('An error occurred in fullTextNewTaskCheck:', error);
+						log.error('An error occurred in forceUpdates:', error);
 					}
-				});
-			}
+				}
 
-			await doWithLock(LOCK_TASKS, async () => {
 				try {
 					await this.tickTickSync?.fullTextNewTaskCheck(fileKey);
 				} catch (error) {
 					log.error('An error occurred in fullTextNewTaskCheck:', error);
 				}
-			});
 
-			await doWithLock(LOCK_TASKS, async () => {
 				try {
 					await this.tickTickSync?.fullTextModifiedTaskCheck(fileKey);
 				} catch (error) {
 					log.error('An error occurred in fullTextModifiedTaskCheck:', error);
 				}
-			});
 
-			await doWithLock(LOCK_TASKS, async () => {
 				try {
 					await this.tickTickSync?.deletedTaskCheck(fileKey);
 				} catch (error) {
 					log.error('An error occurred in deletedTaskCheck:', error);
 				}
-			});
-		}
+			}
+		});
 	}
 }

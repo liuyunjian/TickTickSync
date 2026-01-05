@@ -1,12 +1,12 @@
 import type { SyncMeta } from "./schema";
 import { generateDeviceId, detectDeviceLabel } from "./device";
 
-export async function ensureSyncMeta(meta: SyncMeta): Promise<SyncMeta> {
+export async function ensureSyncMeta(meta: SyncMeta, preferred?: Partial<SyncMeta>): Promise<SyncMeta> {
 	let changed = false;
 
 	if (!meta.deviceId) {
-		meta.deviceId = generateDeviceId();
-		meta.deviceLabel = await detectDeviceLabel();
+		meta.deviceId = preferred?.deviceId || generateDeviceId();
+		meta.deviceLabel = preferred?.deviceLabel || await detectDeviceLabel();
 		changed = true;
 	}
 

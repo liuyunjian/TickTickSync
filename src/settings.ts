@@ -39,6 +39,8 @@ export interface ITickTickSyncSettings {
 	inboxName: string;
 	checkPoint: number;
 
+	vaultName: string;
+
 
 	fileMetadata: FileMetadata;
 	TickTickTasksData: {
@@ -75,6 +77,8 @@ export const DEFAULT_SETTINGS: ITickTickSyncSettings = {
 	inboxName: 'Inbox',
 	checkPoint: 0,
 	skipBackup: false,
+
+	vaultName: '',
 
 	fileMetadata: {},
 	TickTickTasksData: {
