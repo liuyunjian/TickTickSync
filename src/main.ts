@@ -7,13 +7,8 @@ import { MarkdownView, Notice, Plugin, TFolder } from 'obsidian';
 //settings
 import {
 	DEFAULT_SETTINGS,
-	getProjects,
 	getSettings,
-	getTasks,
-	updateProjectGroups,
-	updateProjects,
-	updateSettings,
-	updateTasks
+	updateSettings
 } from './settings';
 
 import { TickTickService } from '@/services';
@@ -117,9 +112,7 @@ export default class TickTickSync extends Plugin {
 				return false; // Returning false indicates that the setting loading failed
 			}
 			if (data?.TickTickTasksData) {
-				updateProjects(data.TickTickTasksData.projects);
-				updateTasks(data.TickTickTasksData.tasks);
-				updateProjectGroups(data.TickTickTasksData.projectGroups);
+				// Old data migration is handled by initDB
 			}
 			const settings = Object.assign({}, DEFAULT_SETTINGS, data);
 			updateSettings(settings);
@@ -135,11 +128,12 @@ export default class TickTickSync extends Plugin {
 			const settings = getSettings();
 			// Verify that the setting exists and is not empty
 			if (settings && Object.keys(settings).length > 0) {
-				await this.saveData( //TODO: migrate to getSettings
-					{
-						...settings,
-						TickTickTasksData: { 'projects': getProjects(), 'tasks': getTasks() }
-					});
+				const settingsToSave = { ...settings };
+				// Large data is now in Dexie only
+				delete (settingsToSave as any).fileMetadata;
+				delete (settingsToSave as any).TickTickTasksData;
+				
+				await this.saveData(settingsToSave);
 			} else {
 				log.warn('Settings are empty or invalid, not saving to avoid data loss.');
 			}
@@ -155,6 +149,9 @@ export default class TickTickSync extends Plugin {
 			new Notice(`Please login from settings.`);
 			return false;
 		}
+
+		// Load Dexie first as it's the source of truth
+		await initDB();
 
 		let devID = getSettings().deviceId;
 		let devLabel = getSettings().deviceLabel;
@@ -187,7 +184,6 @@ export default class TickTickSync extends Plugin {
 			return false;
 		}
 		//And now load the DB and sync it.
-		await initDB();
 		await this.service.synchronization(true);
 
 		new Notice('TickTickSync loaded successfully.' + getSettings().skipBackup ? ' Skipping backup.' : 'TickTick data has been backed up.');
@@ -686,28 +682,9 @@ export default class TickTickSync extends Plugin {
 		const notableChanges: string [][] = [];
 		//TODO make more clean
 		//We're going to handle data structure conversions here.
-		if (!data.version) {
-			const fileMetaDataStructure = data.fileMetadata;
-			if (Array.isArray(fileMetaDataStructure)) {
-				for (const file in fileMetaDataStructure) {
-					const oldTasksHolder = fileMetaDataStructure[file]; //an array of tasks.
-					let newTasksHolder = {};
-					newTasksHolder = {
-						TickTickTasks: oldTasksHolder.TickTickTasks.map((taskIDString) => ({
-							taskId: taskIDString,
-							taskItems: [] //TODO: Validate that the assumption that the next sync will fill these correctly.
-						})),
-						TickTickCount: oldTasksHolder.TickTickCount,
-						defaultProjectId: oldTasksHolder.defaultProjectId
-					};
-					fileMetaDataStructure[file] = newTasksHolder;
-				}
-			}
-			//Force a sync
-			if (getSettings().token) {
-				await this.scheduledSynchronization(true);
-			}
-		}
+		// Legacy migration for old fileMetadata structure is no longer needed 
+		// as we have moved everything to Dexie.
+		
 		if ((!data.version) || (isOlder(data.version, '1.0.10'))) {
 			//get rid of username and password. we don't need them no more.
 			//delete data.username;

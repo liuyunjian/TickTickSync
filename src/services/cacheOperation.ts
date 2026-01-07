@@ -3,12 +3,15 @@ import TickTickSync from '@/main';
 import type { ITask } from '@/api/types/Task';
 import type { IProject } from '@/api/types//Project';
 import { FoundDuplicateListsModal } from '@/modals/FoundDuplicateListsModal';
-import { getProjects, getSettings, getTasks, updateProjects, updateSettings, updateTasks, getDefaultFolder } from '@/settings';
+import { getSettings, updateSettings, getDefaultFolder } from '@/settings';
 //Logging
 import log from '@/utils/logger';
 import { FileMap } from '@/services/fileMap';
 import { db } from "@/db/dexie";
 import { upsertLocalTask } from "@/db/tasks";
+import { getAllProjects, getProjectById } from "@/db/projects";
+import { getAllFiles, getFile, upsertFile, deleteFile, updateFilePath as updateDbFilePath } from "@/db/files";
+import type { DeletionItem } from '@/modals/TaskDeletionModal';
 
 
 export interface FileMetadata {
@@ -53,28 +56,18 @@ export class CacheOperation {
 	}
 
 	async addTaskToMetadata(filepath: string, task: ITask) {
-		// if (getSettings().debugMode) {
-		// 	log.debug("Adding task to : ", filepath)
-		// }
-		const metaData = await this.getFileMetadata(filepath, task.projectId);
-		if (!metaData) {
-			return;
-		} //TODO uniform processing null value
-		const taskMeta: TaskDetail = { taskId: task.id, taskItems: [] };
-		if (task.items && task.items.length > 0) {
-			task.items.forEach((item) => {
-				taskMeta.taskItems.push(item.id);
-			});
+		// With Dexie-only processing, task file relationship is maintained in db.tasks.
+		// upsertLocalTask already handles setting the file.
+		// We still ensure the file exists in the files table.
+		const file = await getFile(filepath);
+		if (!file) {
+			await upsertFile(filepath, task.projectId);
 		}
-		metaData.TickTickTasks.push(taskMeta);
-		metaData.TickTickCount = metaData.TickTickTasks.length;
 	}
 
 	async addTaskItemToMetadata(filepath: string, taskId: string, itemid: string, projectId: string) {
-		const metaData: FileDetail = await this.getFileMetadata(filepath, projectId);
-		const task = metaData.TickTickTasks.find(task => task.taskId === taskId);
-		task?.taskItems.push(itemid);
-		metaData.TickTickCount = metaData.TickTickTasks.length;
+		// Task items are tracked via the iTask structure.
+		// This method is now mostly a no-op as the task itself will be updated in Dexie.
 	}
 
 	//This removes an Item from the metadata, and from the task
@@ -83,114 +76,98 @@ export class CacheOperation {
 		if (!fileMetaData) {
 			return undefined;
 		}
-		const taskIndex = fileMetaData.TickTickTasks.findIndex(task => task.taskId === taskId);
-		if (taskIndex !== -1) {
-			const task = this.loadTaskFromCacheID(taskId);
-			if (!task || !task.items) {
-				return undefined;
-			}
-			let taskItems = task.items;
-			taskItemIds.forEach(taskItemId => {
-				//delete from Task
-				taskItems = taskItems.filter(item => item.id !== taskItemId);
-			});
-			task.items = taskItems;
-			//update will take care of metadata update.
-			return await this.updateTaskToCache(task);
-		} else {
-			log.warn(`Task '${taskId}' not found in metadata`);
+		const task = await this.loadTaskFromCacheID(taskId);
+		if (!task || !task.items) {
+			return undefined;
 		}
-		return undefined;
+		let taskItems = task.items;
+		taskItemIds.forEach(taskItemId => {
+			//delete from Task
+			taskItems = taskItems.filter(item => item.id !== taskItemId);
+		});
+		task.items = taskItems;
+		return await this.updateTaskToCache(task);
 	}
 
 
 	async getFileMetadata(filepath: string, projectId?: string): Promise<FileDetail | undefined> {
-		const metaData = getSettings().fileMetadata[filepath];
-		if (metaData) {
-			return metaData;
+		const file = await getFile(filepath);
+		if (file) {
+			const tasksInFile = await db.tasks.where("file").equals(filepath).toArray();
+			return {
+				TickTickTasks: tasksInFile.map(lt => ({
+					taskId: lt.taskId,
+					taskItems: lt.task.items?.map(i => i.id) || []
+				})),
+				TickTickCount: tasksInFile.length,
+				defaultProjectId: file.defaultProjectId
+			};
 		}
 		return await this.newEmptyFileMetadata(filepath, projectId);
 	}
 
-	getFileMetadatas() {
-		return getSettings().fileMetadata ?? null;
+	async getFileMetadatas(): Promise<FileMetadata> {
+		const files = await getAllFiles();
+		const metadata: FileMetadata = {};
+		for (const file of files) {
+			const tasksInFile = await db.tasks.where("file").equals(file.path).toArray();
+			metadata[file.path] = {
+				TickTickTasks: tasksInFile.map(lt => ({
+					taskId: lt.taskId,
+					taskItems: lt.task.items?.map(i => i.id) || []
+				})),
+				TickTickCount: tasksInFile.length,
+				defaultProjectId: file.defaultProjectId
+			};
+		}
+		return metadata;
 	}
 
 	async updateFileMetadata(filepath: string, newMetadata: FileDetail) {
-		const metadata = getSettings().fileMetadata;
-
-		// If the metadata object does not exist, create a new object and add it to metadata
-		if (!metadata[filepath]) {
-			metadata[filepath] = {} as FileDetail;
-		}
-
-		//Update attribute values in the metadata object
-		metadata[filepath].TickTickTasks = newMetadata.TickTickTasks;
-		metadata[filepath].TickTickCount = newMetadata.TickTickCount;
-		metadata[filepath].defaultProjectId = newMetadata.defaultProjectId;
-
-		// Save the updated metadata object back to the settings object
-		updateSettings({ fileMetadata: metadata });
-		await this.plugin.saveSettings();
-
+		await upsertFile(filepath, newMetadata.defaultProjectId);
 	}
 
 	async deleteTaskIdFromMetadata(filepath: string, taskId: string) {
-
-		const metadata = await this.getFileMetadata(filepath);
-		const oldTickTickTasks = metadata.TickTickTasks;
-
-		const newTickTickTasks = oldTickTickTasks.filter(obj => obj.taskId !== taskId);
-
-		const newTickTickCount = newTickTickTasks.length;
-		metadata.TickTickTasks = newTickTickTasks;
-		metadata.TickTickCount = newTickTickCount;
-		await this.updateFileMetadata(filepath, metadata);
-
+		// In Dexie-only mode, we just clear the file field of the task
+		const lt = await db.tasks.where("taskId").equals(taskId).first();
+		if (lt && lt.file === filepath) {
+			await db.tasks.update(lt.localId, { file: "" });
+		}
 	}
 
 	async updateTaskMetadata(task: ITask, filePath: string) {
-		await this.deleteTaskIdFromMetadataByTaskId(task.id);
-		await this.addTaskToMetadata(filePath, task);
+		const lt = await db.tasks.where("taskId").equals(task.id).first();
+		if (lt) {
+			await db.tasks.update(lt.localId, { file: filePath });
+		}
 	}
 
 	async deleteTaskIdFromMetadataByTaskId(taskId: string) {
-		const metadatas = this.getFileMetadatas();
-		for (const file in metadatas) {
-			const tasks = metadatas[file].TickTickTasks;
-			if (tasks && tasks.find((task: TaskDetail) => task.taskId === taskId)) {
-				await this.deleteTaskIdFromMetadata(file, taskId);
-				break;
-			}
+		const lt = await db.tasks.where("taskId").equals(taskId).first();
+		if (lt) {
+			await db.tasks.update(lt.localId, { file: "" });
 		}
 	}
 
 	//delete filepath from filemetadata
 	async deleteFilepathFromMetadata(filepath: string): Promise<FileMetadata> {
-		const fileMetaData: FileMetadata = getSettings().fileMetadata;
-		const newFileMetadata: FileMetadata = {};
-
-		for (const filename in fileMetaData) {
-			if (filename !== filepath) {
-				newFileMetadata[filename] = fileMetaData[filename];
-			}
+		await deleteFile(filepath);
+		// Also clear file field for all tasks in this file
+		const lts = await db.tasks.where("file").equals(filepath).toArray();
+		for (const lt of lts) {
+			await db.tasks.update(lt.localId, { file: "" });
 		}
-
-		updateSettings({ fileMetadata: newFileMetadata });
-		await this.plugin.saveSettings();
-		return getSettings().fileMetadata;
-
-		// log.debug(`${filepath} is deleted from file metadatas.`)
+		return await this.getFileMetadatas();
 	}
 
 	//Check for duplicates
-	checkForDuplicates(fileMetadata: FileMetadata) {
+	async checkForDuplicates(fileMetadata: FileMetadata) {
 		if (!fileMetadata) {
 			return;
 		}
 
 		const taskIds: Record<string, string> = {};
-		const duplicates: Record<string, string[]> = {};
+		let duplicates: Record<string, string[]> = {};
 
 		for (const file in fileMetadata) {
 			fileMetadata[file].TickTickTasks?.forEach(task => {
@@ -204,84 +181,38 @@ export class CacheOperation {
 				duplicates[task.taskId].push(file);
 			});
 		}
+		//This may be over-kill, but need it right now.
+		await this.checkFilesForDuplicates(taskIds, duplicates);
 		//Some day, may want to do something with all the taskIds?
+		log.debug("Duplicates: ", duplicates);
+		log.debug("TaskIds: ", taskIds);
 		return { taskIds, duplicates };
 	}
 
-	//Check errors in filemata where the filepath is incorrect.
-	async checkFileMetadata(): Promise<number> {
-		const metadatas = this.getFileMetadatas();
-		// log.debug("md: ", metadatas)
-
-		for (const filepath in metadatas) {
-			const value = metadatas[filepath];
-			// log.debug("File: ", value)
-			const file = this.app.vault.getAbstractFileByPath(filepath);
-			if (!file && (value.TickTickTasks?.length === 0 || !value.TickTickTasks)) {
-				log.error(`${filepath} does not exist and metadata is empty.`);
-				await this.deleteFilepathFromMetadata(filepath);
-				continue;
-			}
-			if (value.TickTickTasks?.length === 0 || !value.TickTickTasks) {
-				continue;
-			}
-			//check if file exists
-
-			if (!file) {
-				//search new filepath
-				// log.debug(`file ${filepath} is not exist`)
-				const task1 = value.TickTickTasks[0];
-				// log.debug(TickTickId1)
-				const searchResult = await this.plugin.fileOperation.searchFilepathsByTaskidInVault(task1.taskId);
-				// log.debug(`new file path is`)
-				// log.debug(searchResult)
-
-				//update metadata
-				await this.updateRenamedFilePath(filepath, searchResult);
-				await this.plugin.saveSettings();
-
-			}
-
-			//TODO: Finish this!!
-			//const fileContent = await this.app.vault.read(file)
-			//check if file include all tasks
-
-
-			/*
-			value.TickTickTasks.forEach(async(taskId) => {
-				const taskObject = await this.plugin.cacheOperation?.loadTaskFromCacheyID(taskId)
-
-
-			});
-			*/
-
-		}
-		return Object.keys(metadatas).length;
-	}
 
 	async getDefaultProjectNameForFilepath(filepath: string) {
 		// log.debug("Project Name Request: ", filepath);
-		const metadatas = getSettings().fileMetadata;
-		if (!metadatas[filepath] || metadatas[filepath].defaultProjectId === undefined) {
+		const file = await getFile(filepath);
+		if (!file || file.defaultProjectId === undefined) {
 			return getSettings().defaultProjectName;
 		}
 
-		const defaultProjectId = metadatas[filepath].defaultProjectId;
+		const defaultProjectId = file.defaultProjectId;
 		const projectName = await this.getProjectNameByIdFromCache(defaultProjectId);
 		// log.debug("returning: " + projectName);
 		return projectName;
 	}
 
 	async getDefaultProjectIdForFilepath(filepath: string) {
-		const metadatas = getSettings().fileMetadata;
-		if (!metadatas[filepath] || !metadatas[filepath].defaultProjectId) {
+		const file = await getFile(filepath);
+		if (!file || !file.defaultProjectId) {
 			let defaultProjectId = getSettings().defaultProjectId;
 			if (!defaultProjectId) {
 				defaultProjectId = getSettings().inboxID;
 			}
 			return defaultProjectId;
 		} else {
-			let defaultProjectId = metadatas[filepath].defaultProjectId;
+			let defaultProjectId = file.defaultProjectId;
 			if (!defaultProjectId) {
 				defaultProjectId = getSettings().inboxID;
 			}
@@ -289,9 +220,9 @@ export class CacheOperation {
 		}
 	}
 
-	filepathHasDefaultProjectID(filepath: string) {
-		const metadatas = getSettings().fileMetadata;
-		if (!metadatas[filepath] || metadatas[filepath].defaultProjectId) {
+	async filepathHasDefaultProjectID(filepath: string) {
+		const file = await getFile(filepath);
+		if (!file || file.defaultProjectId) {
 			return true;
 		} else {
 			return false;
@@ -301,13 +232,12 @@ export class CacheOperation {
 
 	async getFilepathForProjectId(projectId: string) {
 		if ((projectId) ||  (projectId !== '')) {
-			const metadatas = getSettings().fileMetadata;
+			const files = await getAllFiles();
 
 			//If this project is set as a default for a file, return that file.
-			for (const key in metadatas) {
-				const value = metadatas[key];
-				if (value.defaultProjectId === projectId) {
-					return key;
+			for (const file of files) {
+				if (file.defaultProjectId === projectId) {
+					return file.path;
 				}
 			}
 
@@ -340,15 +270,7 @@ export class CacheOperation {
 	}
 
 	async setDefaultProjectIdForFilepath(filepath: string, defaultProjectId: string) {
-		const metadata = await this.getFileMetadata(filepath, defaultProjectId);
-		metadata.defaultProjectId = defaultProjectId;
-		if (!metadata.TickTickTasks || !metadata.TickTickCount) {
-			//probably an edge case, but we ended up with a quazi empty metadata
-			metadata.TickTickTasks = [];
-			metadata.TickTickCount = 0;
-		}
-
-		await this.updateFileMetadata(filepath, metadata);
+		await upsertFile(filepath, defaultProjectId);
 	}
 
 	//Read all tasks from Cache
@@ -370,16 +292,19 @@ export class CacheOperation {
 			const meta = await db.meta.get("sync");
 			const deviceId = meta?.deviceId || "unknown";
 			
-			const tasksToPut = newTasks.map(t => ({
-				localId: `tt:${t.id}`,
-				taskId: t.id,
-				task: t,
-				updatedAt: Date.now(),
-				lastModifiedByDeviceId: deviceId,
-				file: this.getFilepathForTask(t.id) || "",
-				source: "ticktick" as const,
-				deleted: t.deleted === 1
-			}));
+			const tasksToPut = [];
+			for (const t of newTasks) {
+				tasksToPut.push({
+					localId: `tt:${t.id}`,
+					taskId: t.id,
+					task: t,
+					updatedAt: Date.now(),
+					lastModifiedByDeviceId: deviceId,
+					file: await this.getFilepathForTask(t.id) || "",
+					source: "ticktick" as const,
+					deleted: t.deleted === 1
+				});
+			}
 			
 			await db.tasks.bulkPut(tasksToPut);
 		} catch (error) {
@@ -402,10 +327,6 @@ export class CacheOperation {
 				deviceId: meta?.deviceId || "unknown",
 				source: "ticktick"
 			});
-			
-			await this.addTaskToMetadata(filePath, task);
-
-			await this.plugin.saveSettings();
 
 		} catch (error) {
 			log.error(`Error appending task to Cache: ${error}`);
@@ -438,12 +359,20 @@ export class CacheOperation {
 		return titles;
 	}
 
+	async getDeletionItems(taskIds: string[]): Promise<DeletionItem[]> {
+		const lts = await db.tasks.where("taskId").anyOf(taskIds).toArray();
+		return lts.map(lt => ({
+			title: this.plugin.taskParser.stripOBSUrl(lt.task.title),
+			filePath: lt.file
+		}));
+	}
+
 	//Overwrite the task with the specified id in update
 	async updateTaskToCache(task: ITask, movedPath: string | null = null) {
 		try {
 			let filePath: string | null = '';
 			if (!movedPath) {
-				filePath =  this.getFilepathForTask(task.id);
+				filePath = await this.getFilepathForTask(task.id);
 				if (!filePath) {
 					filePath = await this.getFilepathForProjectId(task.projectId);
 				}
@@ -467,15 +396,9 @@ export class CacheOperation {
 		}
 	}
 
-	getFilepathForTask(taskId: string) {
-		const metaDatas = this.getFileMetadatas();
-		for (const filepath in metaDatas) {
-			const value = metaDatas[filepath];
-			if (value.TickTickTasks && value.TickTickTasks.find((task: TaskDetail) => task.taskId === taskId)) {
-				return filepath;
-			}
-		}
-		return null;
+	async getFilepathForTask(taskId: string) {
+		const lt = await db.tasks.where("taskId").equals(taskId).first();
+		return lt?.file || null;
 	}
 
 
@@ -583,7 +506,7 @@ export class CacheOperation {
 	//Find project id by name
 	async getProjectIdByNameFromCache(projectName: string) {
 		try {
-			const savedProjects = getProjects();
+			const savedProjects = await getAllProjects();
 			const targetProject = savedProjects.find((obj: IProject) => obj.name.toLowerCase() === projectName.toLowerCase());
 			const projectId = targetProject ? targetProject.id : null;
 			return (projectId);
@@ -595,8 +518,7 @@ export class CacheOperation {
 
 	async getProjectNameByIdFromCache(projectId: string /*, addFolder: boolean = false*/): Promise<string | undefined> {
 		try {
-			const savedProjects = getProjects();
-			const targetProject = savedProjects.find(obj => obj.id === projectId);
+			const targetProject = await getProjectById(projectId);
 			if (!targetProject) return undefined;
 			// if (addFolder) {
 			// 	const groupName = getProjectGroups().find(g => g.id == targetProject.groupId)?.name;
@@ -638,40 +560,11 @@ export class CacheOperation {
 			for (const project of projects) {
 				await this.checkProjectRename(project.id, project.name)
 			}
-			// if (this.plugin.settings.debugMode) {
-			//     if (projectGroups !== undefined && projectGroups !== null) {
-			//         log.debug("==== projectGroups")
-			//         log.debug(projectGroups.map((item) => item.name));
-			//     } else {
-			//         log.debug("==== No projectGroups")
-			//     }
-			//     // ===============
-			//     if (projects !== undefined && projects !== null) {
-			//         log.debug("==== projects -->", projects.length)
-			//         projects.forEach(async project => {
-
-			//             const sections = await this.plugin.tickTickRestAPI?.getProjectSections(project.id);
-			//             if (sections !== undefined && sections !== null && sections.length > 0) {
-			//                 log.debug(`Project: ${project.name}`);
-			//                 sections.forEach(section => {
-			//                     log.debug('\t' + section.name);
-			//                 })
-			//             } else {
-			//                 log.debug(`Project: ${project.name}`);
-			//                 log.debug('\t' + 'no sections')
-			//             }
-			//         })
-			//     } else {
-			//         log.debug("==== No projects")
-			//     }
-
-			//     // ================
-			// }
-
-			//save to json
-			//TODO: Do we want to deal with sections.
-			updateProjects(projects);
-			await this.plugin.saveSettings();
+			
+			//save to Dexie
+			const localProjects = projects.map(p => ({ id: p.id, project: p }));
+			await db.projects.bulkPut(localProjects);
+			
 			return true;
 
 		} catch (error) {
@@ -683,31 +576,18 @@ export class CacheOperation {
 
 	async updateRenamedFilePath(oldpath: string, newpath: string) {
 		try {
-			// log.debug(`oldpath is ${oldpath}`)
-			// log.debug(`newpath is ${newpath}`)
-			const savedTask = await this.loadTasksFromCache();
-			//log.debug(savedTask)
-			const newTasks = savedTask.map(obj => {
-				if (obj.path === oldpath) {
-					return { ...obj, path: newpath };
-				} else {
-					return obj;
-				}
-			});
-			//log.debug(newTasks)
-			await this.saveTasksToCache(newTasks);
+			// update path in db.tasks
+			const lts = await db.tasks.where("file").equals(oldpath).toArray();
+			for (const lt of lts) {
+				await db.tasks.update(lt.localId, { file: newpath });
+			}
 
-			//update filepath
-			const fileMetadatas = getSettings().fileMetadata;
-			fileMetadatas[newpath] = fileMetadatas[oldpath];
-			delete fileMetadatas[oldpath];
-			updateSettings({ fileMetadata: fileMetadatas });
+			// update path in db.files
+			await updateDbFilePath(oldpath, newpath);
 
 		} catch (error) {
 			log.error(`Error updating renamed file path to cache: ${error}`);
 		}
-
-
 	}
 
 	// // TODO: why did I think I needed this?
@@ -750,19 +630,9 @@ export class CacheOperation {
 			log.error('Not adding ', filepath, ' to Metadata because it\'s a folder.');
 			return undefined;
 		}
-		const metadata = getSettings().fileMetadata;
-		if (metadata[filepath]) {
-			return metadata[filepath]; //in case trying to clobber one.
-		}
-		metadata[filepath] = {
-			TickTickTasks: [],
-			TickTickCount: 0,
-			defaultProjectId: projectId
-		} as FileDetail;
-		// Save the updated metadata object back to the settings object
-		updateSettings({ fileMetadata: metadata });
-		await this.plugin.saveSettings();
-		return getSettings().fileMetadata[filepath];
+		
+		await upsertFile(filepath, projectId);
+		return await this.getFileMetadata(filepath, projectId);
 	}
 
 	private async findInFile(file: TFile, listItemsCache: ListItemCache[]) {
@@ -798,9 +668,9 @@ export class CacheOperation {
 	 * @param ttProjectName The current project's name.
 	 */
 	async checkProjectRename(ttProjectId: string, ttProjectName: string): Promise<void> {
-		const fileMetadata = this.getFileMetadatas();
+		const fileMetadata = await this.getFileMetadatas();
 		if (!fileMetadata) return;
-		const projects = getProjects();
+		const projects = await getAllProjects();
 		if (!projects || Object.keys(projects).length == 0) return;
 
 		const project = projects.find(p => p.id === ttProjectId);
@@ -818,12 +688,58 @@ export class CacheOperation {
 				if (vaultFile && vaultFile instanceof TFile) {
 					log.debug(`Renaming ${currentProjectPath} to ${correctFileName}`);
 					await this.app.vault.rename(vaultFile, correctFileName);
-					log.debug(`Updating metadata key for ${currentProjectPath} to ${correctFileName}  === \\n ${fileMetadata[currentProjectPath]}`);
+					log.debug(`Updating metadata key for ${currentProjectPath} to ${correctFileName}  === \n ${fileMetadata[currentProjectPath]}`);
 					await this.updateFileMetadata(correctFileName, fileMetadata[currentProjectPath]);
 					log.debug(`Deleting ${currentProjectPath} from metadata`);
 					await this.deleteFilepathFromMetadata(currentProjectPath);
 				}
 			}
 		}
+	}
+
+	private async checkFilesForDuplicates(taskIds: Record<string, string>, duplicates: Record<string, string[]>) {
+		const markdownFiles = this.plugin.app.vault.getMarkdownFiles();
+		const settings = getSettings();
+		const otherduplicates: Record<string, string[]> = {};
+		for (const file of markdownFiles) {
+			try {
+				const fileMap = new FileMap(this.plugin.app, this.plugin, file);
+				await fileMap.init();
+
+				if (fileMap.hasTasks(settings.enableFullVaultSync)) {
+					const foundTaskIds = fileMap.getTasks();
+					foundTaskIds.forEach(taskId => {
+						if (!otherduplicates.hasOwnProperty(taskId)) {
+							otherduplicates[taskId] = [];
+						}
+						otherduplicates[taskId].push(file.path);
+					});
+				}
+			} catch (e) {
+				log.error(`Failed to process file ${file.path}`, e);
+			}
+		}
+
+		for (const taskId in otherduplicates) {
+			const paths = otherduplicates[taskId];
+			if (paths.length > 1) {
+				if (!taskIds.hasOwnProperty(taskId)) {
+					taskIds[taskId] = paths[0];
+					duplicates[taskId] = paths.slice(1);
+				} else {
+					if (!duplicates.hasOwnProperty(taskId)) {
+						duplicates[taskId] = [];
+					}
+					paths.forEach(path => {
+						if (path !== taskIds[taskId] && !duplicates[taskId].includes(path)) {
+							duplicates[taskId].push(path);
+						}
+					});
+				}
+			}
+		}
+
+		log.debug("Other Duplicates: ", otherduplicates);
+		return duplicates;
 	}
 }

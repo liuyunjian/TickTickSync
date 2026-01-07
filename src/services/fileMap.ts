@@ -131,8 +131,10 @@ export class FileMap {
 		} else {
 			//TODO: There are no actual usages of this. Do we even need it anymore
 			let moveMap: IChildMap = {};
-			const parentTabs = this.plugin.taskParser.getTabs(this.fileLines[id]);
-			const childIds = this.findChildren(this.getTaskIndex(id), parentTabs);
+			const taskIdx = this.getTaskIndex(id);
+			if (taskIdx === -1) return -1;
+			const parentTabs = this.plugin.taskParser.getTabs(this.fileLines[taskIdx]);
+			const childIds = this.findChildren(taskIdx, parentTabs);
 			moveMap = this.buildMoveMap(id, childIds, moveMap);
 			const sortedEntries = Object.entries(moveMap).sort(
 				([, a], [, b]) => a.depth - b.depth
@@ -154,6 +156,16 @@ export class FileMap {
 		}
 	}
 
+	deleteTasks(ids: string[]) {
+		const tasksWithIndices = ids.map(id => ({ id, index: this.getTaskIndex(id) }))
+			.filter(t => t.index !== -1)
+			.sort((a, b) => b.index - a.index); // Sort descending
+
+		for (const t of tasksWithIndices) {
+			this.deleteTaskAndLines(t.id);
+		}
+	}
+
 	getFileLines(): string {
 		return this.fileLines.join('\n');
 	}
@@ -166,8 +178,13 @@ export class FileMap {
 		return this.plugin.taskParser.getNumTabs(this.fileLines[this.getTaskIndex(parentId)]);
 	}
 
-	getTaskItems(parentId: string | undefined) {
-		const parentIdx = this.getTaskIndex(parentId);
+	getTaskItems(parentId: string | undefined, parentIdx: number = -1) {
+		if (parentIdx === -1) {
+			parentIdx = this.getTaskIndex(parentId);
+		}
+		if (parentIdx === -1) {
+			return [];
+		}
 		const taskItems: string[] = [];
 		for (let i = parentIdx + 1; i < this.fileLines.length; i++) {
 			const fileLine = this.fileLines[i];
@@ -189,8 +206,12 @@ export class FileMap {
 	}
 
 	//this relies on the caller passing a proper ID. It could be a task ID or a Item ID, we don't discriminate.
-	getTaskIndex(ID: string): number {
-		return this.fileLines.findIndex(str => this.plugin.taskParser.isMarkdownTask(str) && str.includes(ID));
+	getTaskIndex(ID: string | undefined): number {
+		if (!ID) {
+			return -1;
+		}
+		const lowerID = ID.toLowerCase();
+		return this.fileLines.findIndex(str => this.plugin.taskParser.isMarkdownTask(str) && str.toLowerCase().includes(lowerID));
 	}
 
 	getTaskString(taskId: string): String {
@@ -293,16 +314,23 @@ export class FileMap {
 
 	private deleteTaskAndLines(id: string) {
 		const taskIdx = this.getTaskIndex(id);
-		const linesToDelete = this.getTaskEndLineByTaskID(id) - taskIdx + 1;
+		if (taskIdx === -1) {
+			log.warn(`Task ${id} not found in file ${this.file.path} for deletion.`);
+			return;
+		}
+		const endLine = this.getTaskEndLineByIdx(taskIdx);
+		const linesToDelete = endLine - taskIdx + 1;
 		this.fileLines.splice(taskIdx, linesToDelete);
 	}
 
 	private getTaskEndLineByTaskID(taskId: string) {
 		const parentIdx = this.getTaskIndex(taskId);
+		if (parentIdx === -1) return -1;
 		return this.getTaskEndLineByIdx(parentIdx);
 	}
 
 	private getTaskEndLineByIdx(taskIdx: number) {
+		if (taskIdx < 0 || taskIdx >= this.fileLines.length) return -1;
 		const taskTabs = this.plugin.taskParser.getTabs(this.fileLines[taskIdx]);
 		const numTaskTabs = taskTabs.length;
 		const notePrefix = taskTabs + '  ';
@@ -572,6 +600,12 @@ private getTaskLinesByIdx(taskIdx: number, taskRecord: ITaskRecord) {
 
 
 		return moveMap;
+	}
+
+	getTasks(): string[] {
+		return this.fileLines
+			.map(line => this.plugin.taskParser.getTickTickId(line))
+			.filter((id): id is string => !!id);
 	}
 }
 

@@ -1,11 +1,11 @@
 import Dexie, { Table } from "dexie";
 import type { LocalTask, SyncMeta } from "./schema";
-import type { TaskFileMapping } from "./schema";
+import type { TaskFileMapping, LocalProject, LocalProjectGroup, LocalFile } from "./schema";
 
 import { defaultDBData } from "./schema";
 import { ensureSyncMeta } from "./meta";
 import { migrateDB } from "./migrations";
-import { getTasks, getSettings, updateSettings } from '@/settings';
+import { getSettings, updateSettings } from '@/settings';
 
 type MetaRow = SyncMeta & { key: "sync" };
 
@@ -13,14 +13,20 @@ class TickTickDB extends Dexie {
 	tasks!: Table<LocalTask, string>;
 	meta!: Table<MetaRow, "sync">;
 	mappings!: Table<TaskFileMapping, string>;
+	projects!: Table<LocalProject, string>;
+	projectGroups!: Table<LocalProjectGroup, string>;
+	files!: Table<LocalFile, string>;
 
 	constructor(vaultName: string) {
 		super(vaultName + "TickTickSync");
 
-		this.version(3).stores({
+		this.version(4).stores({
 			tasks: "localId, taskId, updatedAt, lastVaultSync, file, deleted",
 			meta: "key",
-			mappings: "id, taskId, file"
+			mappings: "id, taskId, file",
+			projects: "id",
+			projectGroups: "id",
+			files: "path"
 		});
 	}
 }
@@ -51,8 +57,8 @@ export async function initDB() {
 		}
 		
 		// Initial migration from old settings-based tasks
-		const oldTasks = getTasks();
-		const fileMetadata = getSettings().fileMetadata;
+		const oldTasks = (settings as any).TickTickTasksData?.tasks;
+		const fileMetadata = (settings as any).fileMetadata;
 		
 		if (oldTasks && oldTasks.length > 0) {
 			const tasksToPut: LocalTask[] = oldTasks.map(t => {
@@ -84,6 +90,37 @@ export async function initDB() {
 	}
 
 	if (!rawMeta) return;
+
+	// Migration for version 4 (Projects, ProjectGroups, Files)
+	const projectCount = await db.projects.count();
+	if (projectCount === 0) {
+		const oldProjects = (settings as any).TickTickTasksData?.projects;
+		if (oldProjects && oldProjects.length > 0) {
+			await db.projects.bulkPut(oldProjects.map((p: any) => ({ id: p.id, project: p })));
+		}
+	}
+
+	const groupCount = await db.projectGroups.count();
+	if (groupCount === 0) {
+		const oldGroups = (settings as any).TickTickTasksData?.projectGroups;
+		if (oldGroups && oldGroups.length > 0) {
+			await db.projectGroups.bulkPut(oldGroups.map((g: any) => ({ id: g.id, group: g })));
+		}
+	}
+
+	const fileCount = await db.files.count();
+	if (fileCount === 0) {
+		const fileMetadata = (settings as any).fileMetadata;
+		if (fileMetadata) {
+			const filesToPut: LocalFile[] = Object.entries(fileMetadata).map(([path, detail]: [string, any]) => ({
+				path: path,
+				defaultProjectId: detail.defaultProjectId
+			}));
+			if (filesToPut.length > 0) {
+				await db.files.bulkPut(filesToPut);
+			}
+		}
+	}
 
 	// Sync settings with DB meta (DB is source of truth for device identity)
 	if (settings.deviceId !== rawMeta.deviceId) {

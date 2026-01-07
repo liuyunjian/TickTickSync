@@ -41,14 +41,7 @@ export interface ITickTickSyncSettings {
 
 	vaultName: string;
 
-
-	fileMetadata: FileMetadata;
-	TickTickTasksData: {
-		projects: IProject[];
-		projectGroups: IProjectGroup[];
-		tasks: ITask[];
-	};
-	//statistics: any;
+	// statistics: any;
 }
 
 export const DEFAULT_SETTINGS: ITickTickSyncSettings = {
@@ -80,12 +73,6 @@ export const DEFAULT_SETTINGS: ITickTickSyncSettings = {
 
 	vaultName: '',
 
-	fileMetadata: {},
-	TickTickTasksData: {
-		projects: [],
-		tasks: []
-	}
-
 	//statistics: {}
 };
 
@@ -107,40 +94,6 @@ export const updateSettings = (newSettings: Partial<ITickTickSyncSettings>): ITi
 	return getSettings();
 };
 
-//TODO move to store
-
-// let projects: IProject[] = [];
-
-export const getProjects = (): IProject[] => {
-	return settings.TickTickTasksData.projects;
-};
-
-export const updateProjects = (newProjects: IProject[]): IProject[] => {
-	settings.TickTickTasksData.projects = newProjects;
-	return getProjects();
-};
-
-// let tasks: ITask[] = [];
-
-export const getTasks = (): ITask[] => {
-	return settings.TickTickTasksData.tasks;
-};
-
-export const updateTasks = (newTasks: ITask[]): ITask[] => {
-	settings.TickTickTasksData.tasks = newTasks;
-	return getTasks();
-};
-
-// let projectGroups: IProjectGroup[] = [];
-
-export const getProjectGroups = (): IProjectGroup[] => {
-	return settings.TickTickTasksData.projectGroups;
-};
-
-export const updateProjectGroups = (newProjectGroups: IProjectGroup[]): IProjectGroup[] => {
-	settings.TickTickTasksData.projectGroups = newProjectGroups;
-	return getProjectGroups();
-};
 export const getDefaultFolder = (): string => {
 	if (settings.TickTickTasksFilePath === '/') {
 		return '';

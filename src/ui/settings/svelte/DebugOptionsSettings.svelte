@@ -24,9 +24,9 @@
 		debugMode = getSettings().debugMode;
 	});
 
-	function generateDebugInfoSubset() {
+	async function generateDebugInfoSubset() {
 		const settings = getSettings();
-		const fileMetaData = getSettings().fileMetadata;
+		const fileMetaData = await plugin.cacheOperation.getFileMetadatas();
 		const fmdData = [];
 		for (const file in fileMetaData) {
 			const numFiles = fileMetaData[file].TickTickTasks? fileMetaData[file].TickTickTasks.length: "TickTickTasks not found" ;
@@ -45,7 +45,7 @@
 				taskLinksInObsidian: settings.taskLinksInObsidian,
 				bkupFolder: settings.bkupFolder,
 				skipBackup: settings.skipBackup,
-				numProjects: settings.TickTickTasksData.projects.length,
+				numProjects: (await plugin.service.getProjects()).length,
 				fileTasks: fmdData
 			},
 			defaults:
@@ -68,7 +68,7 @@
 	}
 
 	async function generateDebug() {
-		let debugInfo = generateDebugInfoSubset();
+		let debugInfo = await generateDebugInfoSubset();
 		debugString = "```\n" + JSON.stringify(debugInfo, null, 2) + "\n```";
 		showDebugInfo = true;
 		log.debug(debugString);

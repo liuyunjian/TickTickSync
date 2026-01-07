@@ -120,7 +120,7 @@ export const REGEX = {
 		REMOVE_SPACE: /^\s+|\s+$/g,
 		REMOVE_DATE: new RegExp(due_date_strip_regex, 'gmu'),
 		REMOVE_COMPLETION_DATE: new RegExp(completion_date_strip_regex, 'gmu'),
-		REMOVE_INLINE_METADATA: /%%\[\w+::\s*\w+\]%%/,
+		REMOVE_INLINE_METADATA: /%%\[\w+::\s*\w+\]%%/g,
 		REMOVE_CHECKBOX: /^(-|\*)\s+\[(x|X| )\]\s/,
 		REMOVE_CHECKBOX_WITH_INDENTATION: /^([ \t]*)?(-|\*)\s+\[(x|X| )\]\s/,
 		REMOVE_TickTick_LINK: /\[link\]\(.*?\)/
@@ -303,7 +303,7 @@ export class TaskParser {
 		}
 
 		//find task items
-		const taskLineItems = fileMap.getTaskItems(TickTick_id);
+		const taskLineItems = fileMap.getTaskItems(TickTick_id, lineNumber);
 		if (taskLineItems && taskLineItems.length > 0) {
 			for (const taskLineItem in taskLineItems) {
 				taskItems.push(this.getItemFromLine(taskLineItems[taskLineItem]));

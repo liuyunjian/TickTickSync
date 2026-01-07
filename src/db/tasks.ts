@@ -1,7 +1,18 @@
 import { db } from "./dexie";
 import type { ITask } from '@/api/types/Task';
 import type { LocalTask } from '@/db/schema';
+import log from '@/utils/logger';
 
+
+export async function loadTasksFromCache() {
+	try {
+		const lts = await db.tasks.toArray();
+		return lts.map(lt => lt.task);
+	} catch (error) {
+		log.error(`Error loading tasks from Cache: ${error}`);
+		return [];
+	}
+}
 
 export async function upsertLocalTask(
 	task: ITask,

@@ -1,10 +1,10 @@
 import { App, Notice, TFile, TFolder } from 'obsidian';
 import TickTickSync from '@/main';
 import type { ITask } from './api/types/Task';
-import { TaskDeletionModal } from './modals/TaskDeletionModal';
 import { getDefaultFolder, getSettings } from '@/settings';
 import { FileMap } from '@/services/fileMap';
 import log from '@/utils/logger';
+import { DeletionItem, TaskDeletionModal } from './modals/TaskDeletionModal';
 
 export class FileOperation {
 	app: App;
@@ -155,7 +155,7 @@ export class FileOperation {
 		return result;
 	}
 
-	async getOrCreateDefaultFile(taskFile: string) {
+	async getOrCreateDefaultFile(taskFile: string, projectId?: string) {
 		let file;
 		try {
 			//TODO: Deal with Folders and sections in the fullness of time.
@@ -187,10 +187,16 @@ export class FileOperation {
 			const whoAdded = `${this.plugin.manifest.name} -- ${this.plugin.manifest.version}`;
 			try {
 				file = await this.app.vault.create(taskFile, `== Added by ${whoAdded} == `);
+				if (projectId) {
+					await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
+				}
 			} catch (error) {
 				if (error.message.includes('File already exists')) {
 					log.info('Attempting to find existing file', taskFile);
 					file = this.app.vault.getAbstractFileByPath(taskFile);
+					if (projectId) {
+						await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
+					}
 					if (!file) {
 						const fileName = taskFile.split('/').pop();
 						if (fileName) {
@@ -276,20 +282,28 @@ export class FileOperation {
 
 	// delete task from file
 	async deleteTaskFromSpecificFile(filePath: TFile, task: ITask, bConfirmDialog: boolean) {
+		await this.deleteTasksFromSpecificFile(filePath, [task], bConfirmDialog);
+	}
+
+	async deleteTasksFromSpecificFile(filePath: TFile, tasks: ITask[], bConfirmDialog: boolean) {
 		// Get the file object and update the content
 		if (bConfirmDialog) {
-			const bConfirm = await this.confirmDeletion(task.title + 'in File: ' + filePath);
+			const items: DeletionItem[] = tasks.map(t => ({
+				title: this.plugin.taskParser.stripOBSUrl(t.title),
+				filePath: filePath.path
+			}));
+			const bConfirm = await this.confirmDeletion(items);
 			if (!bConfirm) {
 				new Notice('Tasks will not be deleted. Please rectify the issue before the next sync.', 5000);
 				return [];
 			}
 		}
-		log.info('Task being deleted from file: ', task.id, filePath);
+		log.info(`Deleting ${tasks.length} tasks from file: `, filePath.path);
 
 		const fileMap: FileMap = new FileMap(this.app, this.plugin, filePath);
 		await fileMap.init();
 
-		fileMap.deleteTask(task.id);
+		fileMap.deleteTasks(tasks.map(t => t.id));
 		const newContent = fileMap.getFileLines();
 		await this.app.vault.modify(filePath, newContent);
 		this.plugin.lastLines.set(filePath.path, newContent.length);
@@ -320,7 +334,7 @@ export class FileOperation {
 			const line = fileLines[i];
 
 			if (line.includes(searchTerm)) {
-				const regexResult = /\[ticktick_id::\s*(\w+)\]/.exec(line);
+				const regexResult = /\[ticktick_id::\s*([a-zA-Z0-9]+)\]/.exec(line);
 
 				if (regexResult) {
 					TickTickId = regexResult[1];
@@ -380,7 +394,7 @@ export class FileOperation {
 		if (taskFile) {
 			file = this.app.vault.getAbstractFileByPath(taskFile);
 			if (!(file instanceof TFile)) {
-				file = await this.getOrCreateDefaultFile(taskFile);
+				file = await this.getOrCreateDefaultFile(taskFile, projectTasks[0].projectId);
 				log.debug('Creating new file: ', file.path);
 			}
 		}
@@ -531,12 +545,9 @@ export class FileOperation {
 		}
 	}
 
-	private async confirmDeletion(taskTitle: string) {
-		const tasksTitles = [];
-		tasksTitles.push(taskTitle);
+	private async confirmDeletion(items: DeletionItem[]) {
 		const reason: string = 'task not found in local cache.';
-		const myModal = new TaskDeletionModal(this.app, tasksTitles, reason, (result) => {
-			this.ret = result;
+		const myModal = new TaskDeletionModal(this.app, items, reason, (result) => {
 		});
 		const bConfirmation = await myModal.showModal();
 
@@ -552,7 +563,7 @@ export class FileOperation {
 			let errmsg = `File not found for moved newTask:  ${newTask.id}, ${newTask.title}`;
 			throw new Error(errmsg);
 		}
-		const tFilePathForProject = await this.plugin.fileOperation.getOrCreateDefaultFile(filePathForNewProject)
+		const tFilePathForProject = await this.plugin.fileOperation.getOrCreateDefaultFile(filePathForNewProject, newTask.projectId)
 		if (!tFilePathForProject || (!(tFilePathForProject instanceof TFile))) {
 			let errmsg = `File not found for moved newTask:  ${newTask.id}, ${newTask.title}, ${filePathForNewProject}`;
 			throw new Error(errmsg);

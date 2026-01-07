@@ -224,12 +224,13 @@ export class Tick {
 
 	// PROJECTS ==================================================================
 
+	//TODO, we could get all the project related information in one swell foop.
 	async getProjectGroups(): Promise<IProjectGroup[]> {
 		try {
-			const url = `${this.apiUrl}/${allProjectGroupsEndPoint}`;
+			const url = `${this.apiUrl}/${allProjectGroupsEndPoint}/0`;
 			const response = await this.makeRequest('Get Project Groups', url, 'GET', undefined);
 			if (response) {
-				return response;
+				return response.projectGroups;
 			}
 		} catch (e) {
 			log.error('Get Project Groups failed: ', e);

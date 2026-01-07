@@ -1,4 +1,6 @@
 import type { ITask } from "@/api/types/Task";
+import type { IProject } from "@/api/types/Project";
+import type { IProjectGroup } from "@/api/types/ProjectGroup";
 
 export type SyncMeta = {
 	lastFullSync: number;
@@ -25,6 +27,21 @@ export type LocalTask = {
 	source: "ticktick" | "obsidian";
 };
 
+export type LocalProject = {
+	id: string;
+	project: IProject;
+};
+
+export type LocalProjectGroup = {
+	id: string;
+	group: IProjectGroup;
+};
+
+export type LocalFile = {
+	path: string;
+	defaultProjectId?: string;
+};
+
 export type TaskFileMapping = {
 	id: string;            // `${localId}:${file}`
 	localId: string;
@@ -36,11 +53,17 @@ export type TaskFileMapping = {
 
 export type DBData = {
 	tasks: LocalTask[];
+	projects: LocalProject[];
+	projectGroups: LocalProjectGroup[];
+	files: LocalFile[];
 	meta: SyncMeta;
 };
 
 export const defaultDBData: DBData = {
 	tasks: [],
+	projects: [],
+	projectGroups: [],
+	files: [],
 	meta: {
 		lastFullSync: 0,
 		lastDeltaSync: 0,

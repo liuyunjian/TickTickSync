@@ -12,8 +12,8 @@ import {
 import type { ITask } from '@/api/types/Task';
 import ObjectID from 'bson-objectid';
 import type { TaskDetail } from '@/services/cacheOperation';
-import { TaskDeletionModal } from '@/modals/TaskDeletionModal';
-import { getSettings, updateProjectGroups } from '@/settings';
+import { DeletionItem, TaskDeletionModal } from '@/modals/TaskDeletionModal';
+import { getSettings } from '@/settings';
 import { FileMap, type ITaskItemRecord } from '@/services/fileMap';
 import log from '@/utils/logger';
 import type { DBData, LocalTask } from '@/db/schema';
@@ -71,93 +71,63 @@ export class SyncMan {
 
 
 		let fileMetadata_TickTickTasks: TaskDetail[] = fileMetadata.TickTickTasks;
-		if (currentFileValue) {
-			const currentFileValueWithOutFileMetadata = currentFileValue.replace(/^---[\s\S]*?---\n/, '');
-			const deletedTaskIds = await this.findMissingTaskIds(currentFileValueWithOutFileMetadata, fileMetadata_TickTickTasks, filepath);
-			const numDeletedTasks = deletedTaskIds.length;
-			if (numDeletedTasks > 0) {
-				await this.deleteTasksByIds(deletedTaskIds);
-				//update filemetadata so we don't try to delete items for deleted tasks.
-				fileMetadata = await this.plugin.cacheOperation?.getFileMetadata(filepath, null);
-				if (!fileMetadata || !fileMetadata.TickTickTasks) {
-					return;
-				}
-				fileMetadata_TickTickTasks = fileMetadata.TickTickTasks;
-			}
-			//That's Tasks out of the way. Their items will be magically deleted.
-			//Now go through all the items, if any are deleted, their tasks have to be updated.
-			const deletedItems: string[] = [];
-			for (const task of fileMetadata_TickTickTasks) {
-				if (!task.taskItems) {
-					continue;
-				}
-				for (const taskItem of task.taskItems) {
-					if (!currentFileValueWithOutFileMetadata.includes(taskItem)) {
-						deletedItems.push(taskItem);
-					}
-				}
-				if (deletedItems.length > 0) {
-					//this will remove items, update the file metadata and update the cache in one swell foop.
-					try {
-						let updatedTask = await this.plugin.cacheOperation?.removeTaskItem(fileMetadata, task.taskId, deletedItems);
-						if (updatedTask) {
-							let taskURL = this.plugin.taskParser.getObsidianUrlFromFilepath(filepath);
-							if (taskURL) {
-								updatedTask.title = updatedTask.title + ' ' + taskURL;
-							}
-							let updateResult = await this.plugin.tickTickRestAPI?.updateTask(updatedTask);
-						}
-					} catch (error) {
-						log.error('Task Item removal failed: ', error);
-					}
-				}
-			}
-			// log.debug("deleted items: ", deletedItems)
-
-		} else {
-			//We had a file. There is no content. User deleted ALL tasks, all items will be deleted as a side effect.
-			let deletedTaskIDs = fileMetadata_TickTickTasks.map((taskDetail) => taskDetail.taskId);
-			//But first check if the tasks are elsewhere.
-			if (deletedTaskIDs.length > 0) {
-				let saveTheseTasks: string[] = [];
-				for (const taskId of deletedTaskIDs) {
-					const location = this.plugin.cacheOperation?.getFilepathForTask(taskId);
-					if (location && location != filepath) {
-						log.debug('== found:', taskId, location);
-						saveTheseTasks.push(taskId);
-					}
-				}
-				// log.debug("== saved:", saveTheseTasks)
-				deletedTaskIDs = deletedTaskIDs
-					.filter((taskId) => {
-							return !saveTheseTasks.includes(taskId);
-						}
-					);
-
-			}
-			//They're really really gone. RIP
-			if (deletedTaskIDs.length > 0) {
-				//TODO: Assuming that if they for real deleted everything, it will get caught on the next sync
-				log.error('Content not readable.', currentFileValue, filepath, ' file could open elsewhere or deleted.');
-				new Notice(`All content from ${file_path} APPEARS to have been removed.\n` +
-					'If this is correct, please confirm task deletion. Otherwise, cancel task deletion.', 0);
-
-				await this.deleteTasksByIds(deletedTaskIDs);
-			}
+		if (currentFileValue === undefined || currentFileValue === null) {
+			log.error('File content not readable.', filepath);
+			return;
 		}
 
+		const currentFileValueWithOutFileMetadata = currentFileValue.replace(/^---[\s\S]*?---\n/, '');
+		const deletedTaskIds = await this.findMissingTaskIds(currentFileValueWithOutFileMetadata, fileMetadata_TickTickTasks, filepath);
+		const numDeletedTasks = deletedTaskIds.length;
+		if (numDeletedTasks > 0) {
+			await this.deleteTasksByIds(deletedTaskIds);
+			//update filemetadata so we don't try to delete items for deleted tasks.
+			fileMetadata = await this.plugin.cacheOperation?.getFileMetadata(filepath, null);
+			if (!fileMetadata || !fileMetadata.TickTickTasks) {
+				return;
+			}
+			fileMetadata_TickTickTasks = fileMetadata.TickTickTasks;
+		}
+		//That's Tasks out of the way. Their items will be magically deleted.
+		//Now go through all the items, if any are deleted, their tasks have to be updated.
+		const deletedItems: string[] = [];
+		for (const task of fileMetadata_TickTickTasks) {
+			if (!task.taskItems) {
+				continue;
+			}
+			for (const taskItem of task.taskItems) {
+				if (!currentFileValueWithOutFileMetadata.includes(taskItem)) {
+					deletedItems.push(taskItem);
+				}
+			}
+			if (deletedItems.length > 0) {
+				//this will remove items, update the file metadata and update the cache in one swell foop.
+				try {
+					let updatedTask = await this.plugin.cacheOperation?.removeTaskItem(fileMetadata, task.taskId, deletedItems);
+					if (updatedTask) {
+						let taskURL = this.plugin.taskParser.getObsidianUrlFromFilepath(filepath);
+						if (taskURL) {
+							updatedTask.title = updatedTask.title + ' ' + taskURL;
+						}
+						let updateResult = await this.plugin.tickTickRestAPI?.updateTask(updatedTask);
+					}
+				} catch (error) {
+					log.error('Task Item removal failed: ', error);
+				}
+			}
+		}
 	}
 
 	async findMissingTaskIds(currentContent: string, taskDetails: TaskDetail[], filePath: string) {
 
 		// Extract all taskIds from the currentContent, considering the specific structure.
-		const regex = /%%\[ticktick_id:: ([a-f0-9]{24})\]%%/g;
-		const matches: RegExpMatchArray = currentContent.matchAll(regex);
-		const existingTaskIds = new Set([...matches].map((match) => match[1]));
+		const regex = /%%\[ticktick_id::\s*([a-zA-Z0-9]+)\]%%/gi;
+		const matches = currentContent.matchAll(regex);
+		const existingTaskIds = new Set([...matches].map((match) => match[1].toLowerCase()));
 		// Find taskIds in the tasks list that are not present in the existingTaskIds set.
 		// Filter and extract taskIds from taskDetails
 		let missingTaskIds = taskDetails
-			.filter((taskDetail) => !existingTaskIds.has(taskDetail.taskId))
+			.filter((taskDetail) => !existingTaskIds.has(taskDetail.taskId.toLowerCase()))
 			.map((taskDetail: TaskDetail) => taskDetail.taskId);// Explicitly create an array of strings
 
 		//ok, but if they're just being moved? See if we can find them elsewhere first.
@@ -165,7 +135,7 @@ export class SyncMan {
 		if (missingTaskIds && missingTaskIds.length > 0) {
 			let saveTheseTasks: string[] = [];
 			for (const taskId of missingTaskIds) {
-				const location = this.plugin.cacheOperation?.getFilepathForTask(taskId);
+				const location = await this.plugin.cacheOperation?.getFilepathForTask(taskId);
 				if (location && location != filePath) {
 					log.debug('Task found in different file:', taskId, location);
 					saveTheseTasks.push(taskId);
@@ -995,18 +965,34 @@ export class SyncMan {
 		}
 		log.debug("FileGroups", JSON.stringify(fileGroups,null,4));
 
+		// 1. Handle Deletions (Grouped confirmation)
+		const tasksToConfirmDeletionIds: string[] = [];
+		for (const group of fileGroups.values()) {
+			tasksToConfirmDeletionIds.push(...group.toDelete.map(t => t.id));
+		}
+
+		let proceedWithDeletions = true;
+		if (tasksToConfirmDeletionIds.length > 0) {
+			proceedWithDeletions = await this.confirmDeletion(tasksToConfirmDeletionIds, 'tasks deleted from TickTick');
+			if (!proceedWithDeletions) {
+				new Notice('Tasks will not be deleted from vault.', 5000);
+			}
+		}
+
 		for (const [filePath, group] of fileGroups) {
 			const file = this.app.vault.getAbstractFileByPath(filePath);
 
 			// 1. Handle Deletions (Delayed delete with tombstones: the record stays in Dexie)
-			for (const task of group.toDelete) {
+			if (proceedWithDeletions && group.toDelete.length > 0) {
 				if (file instanceof TFile) {
-					await this.plugin.fileOperation?.deleteTaskFromSpecificFile(file, task, true);
+					await this.plugin.fileOperation?.deleteTasksFromSpecificFile(file, group.toDelete, false);
 				}
-				// Clear the file field since it's gone from vault, but KEEP the record in Dexie as a tombstone
-				const lt = tasks.find(t => t.task.id === task.id);
-				if (lt) {
-					dbUpdates.push({ localId: lt.localId, changes: { file: "" } });
+				for (const task of group.toDelete) {
+					// Clear the file field since it's gone from vault, but KEEP the record in Dexie as a tombstone
+					const lt = tasks.find(t => t.task.id === task.id);
+					if (lt) {
+						dbUpdates.push({ localId: lt.localId, changes: { file: "" } });
+					}
 				}
 			}
 
@@ -1064,7 +1050,8 @@ export class SyncMan {
 			}
 
 			if (allResources.projectGroups) {
-				updateProjectGroups(allResources.projectGroups);
+				await db.projectGroups.clear();
+				await db.projectGroups.bulkPut(allResources.projectGroups.map(g => ({ id: g.id, group: g })));
 			}
 
 			const allTaskDetails = allResources['syncTaskBean'];
@@ -1177,7 +1164,8 @@ export class SyncMan {
 			//      VERIFY: This doesn't bite us in the ass.
 
 			let newTickTickTasks = [];
-			if (Object.keys(getSettings().fileMetadata).length === 0) {
+ 		const filesMetadata = await this.plugin.cacheOperation.getFileMetadatas();
+ 		if (Object.keys(filesMetadata).length === 0) {
 				newTickTickTasks = tasksFromTickTic;
 			} else {
 				newTickTickTasks = tasksFromTickTic.filter(task => !tasksInCache.some(t => t.id === task.id));
@@ -1305,7 +1293,7 @@ export class SyncMan {
 				// Group by file
 				const tasksByFile = new Map<string, ITask[]>();
 				for (const task of recentUpdates) {
-					const taskFile = this.plugin.cacheOperation.getFilepathForTask(task.id);
+ 				const taskFile = await this.plugin.cacheOperation.getFilepathForTask(task.id);
 					if (taskFile) {
 						if (!tasksByFile.has(taskFile)) tasksByFile.set(taskFile, []);
 						tasksByFile.get(taskFile)!.push(task);
@@ -1456,7 +1444,7 @@ export class SyncMan {
 	//Check if user moved the task.
 	private async checkForMoves(taskId: string, filepath: string) {
 		let projectMoved = false;
-		const oldFilePath = this.plugin.cacheOperation.getFilepathForTask(taskId);
+		const oldFilePath = await this.plugin.cacheOperation.getFilepathForTask(taskId);
 		if (oldFilePath && oldFilePath !== filepath) {
 			projectMoved = true;
 		}
@@ -1490,11 +1478,10 @@ export class SyncMan {
 	}
 
 	private async confirmDeletion(taskIds: string[], reason: string) {
-		const tasksTitles = await this.plugin.cacheOperation?.getTaskTitles(taskIds);
+		const items = await this.plugin.cacheOperation?.getDeletionItems(taskIds);
 
 
-		const myModal = new TaskDeletionModal(this.app, tasksTitles, reason, (result) => {
-			this.ret = result;
+		const myModal = new TaskDeletionModal(this.app, items, reason, (result) => {
 		});
 		const bConfirmation = await myModal.showModal();
 
