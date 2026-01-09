@@ -47,7 +47,8 @@ export async function pullFromTickTick(
 			lastModifiedByDeviceId: "ticktick",
 			file: local?.file ?? "",
 			source: "ticktick",
-			deleted: rt.deleted === 1
+			deleted: rt.deleted === 1,
+			lastVaultSync: local?.lastVaultSync
 		};
 
 		const resolved = resolveTaskConflict(local, remoteLocalTask);

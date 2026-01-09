@@ -31,6 +31,7 @@ import { TickTickSyncSettingTab } from './ui/settings';
 import { QueryInjector } from '@/query/injector';
 import store from '@/store';
 import { DateMan } from '@/dateMan';
+import { FileMap } from '@/services/fileMap';
 
 //logging
 import log from '@/utils/logger';
@@ -247,12 +248,11 @@ export default class TickTickSync extends Plugin {
 		const target = evt.target as HTMLInputElement;
 		const bOpenTask = target.checked;
 
-		if (target.className !== 'task-list-item-checkbox') {
+		if (!target.classList.contains('task-list-item-checkbox')) {
 			return;
 		}
 
 		if (editor) {
-			const cursor = editor.getCursor('from'); // Get the cursor position
 			const mouse = editor.posAtMouse(evt);
 			const line = mouse.line; // Line where the click occurred
 			const clickedText = editor.getLine(line); // Get the text at the clicked line
@@ -267,7 +267,12 @@ export default class TickTickSync extends Plugin {
 				} else {
 					const itemID = this.taskParser.getLineItemId(clickedText);
 					if (itemID) {
-						new Notice('Item will be updated on next sync');
+						const markDownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+						if (markDownView?.file) {
+							const fileMap = new FileMap(this.app, this, markDownView.file);
+							await fileMap.init();
+							await this.service.tickTickSync.handleTaskItem(clickedText, fileMap, line);
+						}
 					}
 				}
 			}
@@ -594,9 +599,10 @@ export default class TickTickSync extends Plugin {
 		//      keyup, or keyup and specific events (eg: enter, up-arrow, down-arrow)
 		//for now, we'll debounce it.
 		this.registerEvent(this.app.workspace.on('editor-change', async (editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
-
-			processTimeOut = setTimeout(async () => {
+			if (processTimeOut) {
 				clearTimeout(processTimeOut);
+			}
+			processTimeOut = setTimeout(async () => {
 				try {
 					if (!getSettings().token) {
 						return;

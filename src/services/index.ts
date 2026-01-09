@@ -272,7 +272,13 @@ export class TickTickService {
 				const obsidianURL = this.plugin.taskParser.getObsidianUrlFromFilepath(filepath);
 
 				for (const taskDetails of value.TickTickTasks) {
-					let taskObject = await this.cacheOperation?.loadTaskFromCacheID(taskDetails.taskId);
+					const localTask = await this.cacheOperation?.loadLocalTaskFromCacheID(taskDetails.taskId);
+					let taskObject = localTask?.task;
+
+					if (localTask && (!localTask.lastVaultSync || localTask.lastVaultSync < localTask.updatedAt)) {
+						log.debug(`Cleaning up sync timestamps for task ${taskDetails.taskId} in ${filepath}`);
+						await this.cacheOperation.updateTaskToCache(localTask.task, filepath, Date.now());
+					}
 
 					if (!taskObject) {
 						// Try to get from TickTick
@@ -283,8 +289,8 @@ export class TickTickService {
 									await this.cacheOperation?.deleteTaskIdFromMetadata(filepath, taskDetails.taskId);
 									continue;
 								}
-								// If found, update cache
-								await this.cacheOperation.updateTaskToCache(taskObject, filepath);
+								// If found, update cache and mark as synced to vault
+								await this.cacheOperation.updateTaskToCache(taskObject, filepath, Date.now());
 							}
 						} catch (error) {
 							if (error.message?.includes('404')) {

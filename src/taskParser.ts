@@ -742,7 +742,7 @@ export class TaskParser {
 
 		//Anything other than 'x' is a not done state. Deal with it accordingly.
 		//https://publish.obsidian.md/tasks/Getting+Started/Statuses
-		const status = checkBox == 'x';
+		const status = checkBox.toLowerCase() == 'x';
 		let description = matches[4] || '';
 		description = description.replace(taskIDRegex, '');
 		let indent = matches[1] ? matches[1].length : 0;

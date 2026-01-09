@@ -72,7 +72,7 @@ export class CacheOperation {
 
 	//This removes an Item from the metadata, and from the task
 	//assumes file metadata has been looked up.
-	async removeTaskItem(fileMetaData: FileDetail, taskId: string, taskItemIds: string[]) {
+	async removeTaskItem(fileMetaData: FileDetail, taskId: string, taskItemIds: string[], filepath?: string) {
 		if (!fileMetaData) {
 			return undefined;
 		}
@@ -86,7 +86,7 @@ export class CacheOperation {
 			taskItems = taskItems.filter(item => item.id !== taskItemId);
 		});
 		task.items = taskItems;
-		return await this.updateTaskToCache(task);
+		return await this.updateTaskToCache(task, filepath, Date.now());
 	}
 
 
@@ -314,7 +314,7 @@ export class CacheOperation {
 	}
 
 	//Append to Cache file
-	async appendTaskToCache(task: ITask, filePath: string) {
+	async appendTaskToCache(task: ITask, filePath: string, lastVaultSync?: number) {
 		try {
 			if (task === null) {
 				return;
@@ -325,7 +325,8 @@ export class CacheOperation {
 			await upsertLocalTask(task, {
 				file: filePath,
 				deviceId: meta?.deviceId || "unknown",
-				source: "ticktick"
+				source: "ticktick",
+				lastVaultSync: lastVaultSync
 			});
 
 		} catch (error) {
@@ -344,6 +345,16 @@ export class CacheOperation {
 			return lt?.task;
 		} catch (error) {
 			log.error(`Error finding task from Cache:`, error);
+		}
+		return undefined;
+	}
+
+	async loadLocalTaskFromCacheID(taskId?: string): Promise<LocalTask | undefined> {
+		if (!taskId) return undefined;
+		try {
+			return await db.tasks.where("taskId").equals(taskId).first();
+		} catch (error) {
+			log.error(`Error finding local task from Cache:`, error);
 		}
 		return undefined;
 	}
@@ -368,7 +379,7 @@ export class CacheOperation {
 	}
 
 	//Overwrite the task with the specified id in update
-	async updateTaskToCache(task: ITask, movedPath: string | null = null) {
+	async updateTaskToCache(task: ITask, movedPath: string | null = null, lastVaultSync?: number) {
 		try {
 			let filePath: string | null = '';
 			if (!movedPath) {
@@ -388,7 +399,7 @@ export class CacheOperation {
 			//Delete the existing task
 			await this.deleteTaskFromCache(task.id);
 			//Add new task
-			await this.appendTaskToCache(task, filePath);
+			await this.appendTaskToCache(task, filePath, lastVaultSync);
 			return task;
 		} catch (error) {
 			log.error(`Error updating task to Cache: ${error}`);
@@ -511,13 +522,16 @@ export class CacheOperation {
 			const projectId = targetProject ? targetProject.id : null;
 			return (projectId);
 		} catch (error) {
-			log.error(`Error finding project from Cache file: ${error}`);
+			log.error(`Error finding project ${projectName} from Cache file: ${error}`);
 			return (false);
 		}
 	}
 
 	async getProjectNameByIdFromCache(projectId: string /*, addFolder: boolean = false*/): Promise<string | undefined> {
 		try {
+			if (!projectId) {
+				return getSettings().defaultProjectName;
+			}
 			const targetProject = await getProjectById(projectId);
 			if (!targetProject) return undefined;
 			// if (addFolder) {
@@ -526,7 +540,7 @@ export class CacheOperation {
 			// }
 			return targetProject.name;
 		} catch (error) {
-			log.error(`Error finding project from Cache file: ${error}`);
+			log.error(`Error finding project ${projectId} from Cache file: ${error}`);
 		}
 		return undefined;
 	}

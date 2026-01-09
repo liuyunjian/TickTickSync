@@ -157,16 +157,20 @@ export class FileOperation {
 
 	async getOrCreateDefaultFile(taskFile: string, projectId?: string) {
 		let file;
+		// Normalize taskFile path (remove leading slash)
+		if (taskFile.startsWith('/')) {
+			taskFile = taskFile.substring(1);
+		}
+
 		try {
 			//TODO: Deal with Folders and sections in the fullness of time.
 			let folderPath = getDefaultFolder();
-			if (!folderPath || folderPath === '') {
-				folderPath = '/';
-			}
-			let folder = this.app.vault.getAbstractFileByPath(folderPath);
-			if (!(folder instanceof TFolder)) {
-				log.warn(`Folder ${folderPath} does not exit. It will be created`);
-				folder = await this.app.vault.createFolder(folderPath);
+			if (folderPath && folderPath !== '') {
+				let folder = this.app.vault.getAbstractFileByPath(folderPath);
+				if (!(folder instanceof TFolder)) {
+					log.warn(`Folder ${folderPath} does not exit. It will be created`);
+					folder = await this.app.vault.createFolder(folderPath);
+				}
 			}
 			//TODO: When we implement this, beware case sensitivity.!
 
@@ -205,7 +209,7 @@ export class FileOperation {
 							const files = this.app.vault.getMarkdownFiles();
 							for (const f of files) {
 								log.debug('Checking file', f.path);
-								if (f.path.toLowerCase() === fileName.toLowerCase()) {
+								if (f.path.toLowerCase() === taskFile.toLowerCase()) {
 									log.debug('Found existing file', f.path);
 									file = f;
 									break;
@@ -391,25 +395,26 @@ export class FileOperation {
 	private async synchronizeToFile(taskFile: string, projectTasks: ITask[], bUpdating: boolean) {
 		let file;
 		let result;
+
 		if (taskFile) {
+			// Normalize taskFile path (remove leading slash)
+			if (taskFile.startsWith('/')) {
+				taskFile = taskFile.substring(1);
+			}
+
 			file = this.app.vault.getAbstractFileByPath(taskFile);
 			if (!(file instanceof TFile)) {
 				file = await this.getOrCreateDefaultFile(taskFile, projectTasks[0].projectId);
-				log.debug('Creating new file: ', file.path);
+				if (file && file instanceof TFile) {
+					log.debug('Created/found new file: ', file.path);
+				}
 			}
 		}
 
-		// //make sure top level tasks are first
-		// projectTasks = this.doTheSortMambo(projectTasks);
-		// log.debug('Sorted project Tasks:');
-		// projectTasks.forEach(t => {
-		// 	log.debug(`Task: id=${t.id}, ParentID=${t.parentId}, title=${t.title.substring(0, 20)}`);
-		// });
-
-		//only for debugging, in case I lose my sort shit again.
-		// let subset = projectTasks.map((task) => {
-		// 	return { id: task.id, title: task.title, parent: task.parentId, children: task.childIds };
-		// });
+		if (!file || !(file instanceof TFile)) {
+			log.error('Could not find or create file: ', taskFile);
+			return false;
+		}
 
 		result = await this.syncTasks(file, projectTasks, bUpdating);
 		return result;
@@ -465,7 +470,7 @@ export class FileOperation {
 					log.warn('A Task was being added but was already in file: ', task.id, task.title);
 					//it's in the file, but not in cache. Just update it.
 					fileMap.updateTask(task, lineText);
-					await this.plugin.cacheOperation?.updateTaskToCache(task, file.path);
+					await this.plugin.cacheOperation?.updateTaskToCache(task, file.path, Date.now());
 					addedTasks.push(task.id);
 					continue;
 				} else {
@@ -519,13 +524,13 @@ export class FileOperation {
 			if (!bUpdating) {
 				//we're updating the task to get the right OBS URL in there.
 				let addedTask = await this.plugin.tickTickRestAPI?.updateTask(task);
-				await this.plugin.cacheOperation?.appendTaskToCache(addedTask, file.path);
+				await this.plugin.cacheOperation?.appendTaskToCache(addedTask, file.path, Date.now());
 			} else {
 				if (!bTaskMove) {
-					await this.plugin.cacheOperation?.updateTaskToCache(task, file.path);
+					await this.plugin.cacheOperation?.updateTaskToCache(task, file.path, Date.now());
 				} else {
 					let addedTask = await this.plugin.tickTickRestAPI?.updateTask(task);
-					await this.plugin.cacheOperation?.updateTaskToCache(addedTask, filePathForNewProject);
+					await this.plugin.cacheOperation?.updateTaskToCache(addedTask, filePathForNewProject, Date.now());
 				}
 
 			}

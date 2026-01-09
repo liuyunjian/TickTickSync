@@ -20,6 +20,7 @@ export async function upsertLocalTask(
 		file?: string;
 		source: "obsidian" | "ticktick";
 		deviceId: string;
+		lastVaultSync?: number;
 	}
 ) {
 	const now = Date.now();
@@ -29,16 +30,19 @@ export async function upsertLocalTask(
 		? `tt:${task.id}`
 		: crypto.randomUUID();
 
+	const existing = await db.tasks.get(localId);
+
 	const localTask: LocalTask = {
 		localId: localId,
 		taskId: task.id,
 		task,
 
 		updatedAt: modifiedTime  ?? now,
+		lastVaultSync: options.lastVaultSync ?? existing?.lastVaultSync,
 		lastModifiedByDeviceId: options.deviceId,
 
 		deleted: false,
-		file: options.file ?? "",
+		file: options.file ?? existing?.file ?? "",
 		source: options.source
 	};
 
@@ -46,11 +50,15 @@ export async function upsertLocalTask(
 }
 
 export async function markTaskDeleted(taskId: string, deviceId: string) {
-	await db.tasks.update(taskId, {
-		deleted: true,
-		updatedAt: Date.now(),
-		lastModifiedByDeviceId: deviceId
-	});
+	const localId = `tt:${taskId}`;
+	const existing = await db.tasks.get(localId);
+	if (existing) {
+		await db.tasks.update(localId, {
+			deleted: true,
+			updatedAt: Date.now(),
+			lastModifiedByDeviceId: deviceId
+		});
+	}
 }
 
 export async function getDirtyTasks(since: number) {

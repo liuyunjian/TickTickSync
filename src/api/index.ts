@@ -509,7 +509,7 @@ export class Tick {
 				childIds: jsonOptions.childIds ? jsonOptions.childIds : [],
 				parentId: jsonOptions.parentId ? jsonOptions.parentId : null
 			};
-			log.debug('Update Task: ', thisTask.id, thisTask.projectId);
+			log.debug('Update Task: ', thisTask.title.substring(0, 15), thisTask.id, thisTask.projectId);
 
 			let updatePayload: any;
 			updatePayload = {
@@ -521,6 +521,7 @@ export class Tick {
 				update: [thisTask]
 			};
 			const url = `${this.apiUrl}/${updateTaskEndPoint}`;
+			//TODO: Updating a task that has been deleted will fail silently. Should ought to ensure that the task exists firsts. BUT that happens very rarely
 			const response = await this.makeRequest('Update Task', url, 'POST', updatePayload);
 			// log.debug('Update Task Response: ', response);
 			if (response) {

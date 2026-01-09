@@ -103,7 +103,7 @@ export class SyncMan {
 			if (deletedItems.length > 0) {
 				//this will remove items, update the file metadata and update the cache in one swell foop.
 				try {
-					let updatedTask = await this.plugin.cacheOperation?.removeTaskItem(fileMetadata, task.taskId, deletedItems);
+					let updatedTask = await this.plugin.cacheOperation?.removeTaskItem(fileMetadata, task.taskId, deletedItems, filepath);
 					if (updatedTask) {
 						let taskURL = this.plugin.taskParser.getObsidianUrlFromFilepath(filepath);
 						if (taskURL) {
@@ -188,7 +188,7 @@ export class SyncMan {
 					let parentTask = await this.plugin.cacheOperation?.loadTaskFromCacheID(currentTask.parentId);
 					parentTask = this.plugin.taskParser.addChildToParent(parentTask, currentTask.parentId);
 					parentTask = await this.plugin.tickTickRestAPI?.updateTask(parentTask);
-					await this.plugin.cacheOperation?.updateTaskToCache(parentTask);
+					await this.plugin.cacheOperation?.updateTaskToCache(parentTask, null, Date.now());
 				}
 				const ticktick_id = newTask.id;
 				//log.debug(newTask);
@@ -322,6 +322,13 @@ export class SyncMan {
 						oldFilePath = __ret.oldFilePath;
 						const bParentchanged = (taskRecord.parentId ? taskRecord.parentId : '') != (savedTask.parentId ? savedTask.parentId : '');
 						if (!projectMoved && !bParentchanged) {
+							// If we're here, the task is in the right file and parentage is correct.
+							// Ensure lastVaultSync is up to date if it's missing or old.
+							const localTask = await this.plugin.cacheOperation?.loadLocalTaskFromCacheID(lineTask_ticktick_id);
+							if (localTask && (!localTask.lastVaultSync || localTask.lastVaultSync < localTask.updatedAt || !localTask.file)) {
+								log.debug(`Syncing timestamps and mapping for task ${lineTask_ticktick_id} during check.`);
+								await this.plugin.cacheOperation?.updateTaskToCache(localTask.task, filepath, Date.now());
+							}
 							return false;
 						} else {
 							log.debug('Task Moved.', {
@@ -359,7 +366,7 @@ export class SyncMan {
 				//this should only be necessary for a while, until they update all tasks
 				if (!savedTask.dateHolder) {
 					savedTask.dateHolder = this.plugin.dateMan?.getEmptydateHolder();
-					await this.plugin.cacheOperation?.updateTaskToCache(savedTask, null);
+					await this.plugin.cacheOperation?.updateTaskToCache(savedTask, null, Date.now());
 				}
 				if (!savedTask.lineHash) {
 					savedTask.lineHash = await this.plugin.taskParser?.getLineHash(newHash);
@@ -527,9 +534,9 @@ export class SyncMan {
 					//
 
 					if (!projectChanged) {
-						await this.plugin.cacheOperation?.updateTaskToCache(updatedTask, null);
+						await this.plugin.cacheOperation?.updateTaskToCache(updatedTask, null, Date.now());
 					} else {
-						await this.plugin.cacheOperation?.updateTaskToCache(updatedTask, filepath);
+						await this.plugin.cacheOperation?.updateTaskToCache(updatedTask, filepath, Date.now());
 					}
 					modified = true;
 				}
@@ -543,17 +550,18 @@ export class SyncMan {
 						if (getSettings().debugMode) {
 							log.debug(`task completed`);
 						}
-						this.plugin.tickTickRestAPI?.CloseTask(lineTask.id, lineTask.projectId);
+						await this.plugin.tickTickRestAPI?.CloseTask(lineTask.id, lineTask.projectId);
 						await this.plugin.cacheOperation?.closeTaskToCacheByID(lineTask.id);
 					} else {
 
 						if (getSettings().debugMode) {
 							log.debug(`task not completed`);
 						}
-						this.plugin.tickTickRestAPI?.OpenTask(lineTask.id, lineTask.projectId);
+						await this.plugin.tickTickRestAPI?.OpenTask(lineTask.id, lineTask.projectId);
 						await this.plugin.cacheOperation?.reopenTaskToCacheByID(lineTask.id);
 					}
 					statusChanged = true;
+					modified = true;
 					new Notice(`Task Status for ${lineTask_ticktick_id} updated `);
 				}
 
@@ -615,7 +623,7 @@ export class SyncMan {
 			if (!modified && bHashCheckFailed) {
 				const updatedHash = await this.plugin.taskParser?.getLineHash(lineText + taskNotes);
 				lineTask.lineHash = updatedHash;
-				await this.plugin.cacheOperation?.updateTaskToCache(lineTask, null);
+				await this.plugin.cacheOperation?.updateTaskToCache(lineTask, null, Date.now());
 				await this.plugin.saveSettings();
 				log.debug(`Updated hash: ${updatedHash}`);
 			}
@@ -686,7 +694,7 @@ export class SyncMan {
 					//TODO: Verify that pushing an item with title and status will just matically add it.
 					parentTask.modifiedTime = this.plugin.dateMan?.formatDateToISO(new Date());
 					const result = await this.plugin.tickTickRestAPI?.updateTask(parentTask);
-					await this.plugin.cacheOperation?.updateTaskToCache(parentTask);
+					await this.plugin.cacheOperation?.updateTaskToCache(parentTask, filepath, Date.now());
 				}
 
 			}
@@ -893,7 +901,10 @@ export class SyncMan {
 	 */
 	async syncVaultWithDexie(): Promise<void> {
 		const tasks = await db.tasks.toArray();
-		const syncTag = getSettings().SyncTag?.toLowerCase();
+		let syncTag = getSettings().SyncTag?.toLowerCase();
+		if (syncTag && syncTag.includes('/')) {
+			syncTag = syncTag.replace(/\//g, '-');
+		}
 		const syncProject = getSettings().SyncProject;
 		const andOr = getSettings().tagAndOr;
 
@@ -924,6 +935,11 @@ export class SyncMan {
 			}
 
 			if (!targetFile) continue;
+
+			// Normalize targetFile to existing mapping if it only differs by case
+			if (lt.file && lt.file.toLowerCase() === targetFile.toLowerCase()) {
+				targetFile = lt.file;
+			}
 
 			if (!fileGroups.has(targetFile)) {
 				fileGroups.set(targetFile, { toAdd: [], toUpdate: [], toDelete: [] });
@@ -1385,7 +1401,7 @@ export class SyncMan {
 					const updatedTask = await this.plugin.tickTickRestAPI?.updateTask(task);
 					//Cache the title without the URL because that's what we're going to do content compares on.
 					updatedTask.title = await this.plugin.taskParser?.stripOBSUrl(updatedTask.title);
-					await this.plugin.cacheOperation?.updateTaskToCache(updatedTask);
+					await this.plugin.cacheOperation?.updateTaskToCache(updatedTask, null, Date.now());
 				} else {
 					const error = 'Task: ' + taskDetail + 'from file: ' + filepath + 'not found.';
 					throw new Error(error);
@@ -1433,7 +1449,7 @@ export class SyncMan {
 					const merged = { ...savedTask, ...lineTask };
 					Object.assign(lineTask, merged);
 					const updatedTask = <ITask>await this.plugin.tickTickRestAPI?.updateTask(lineTask);
-					await this.plugin.cacheOperation?.updateTaskToCache(updatedTask, null);
+					await this.plugin.cacheOperation?.updateTaskToCache(updatedTask, null, Date.now());
 				}
 			}
 		}
@@ -1488,7 +1504,7 @@ export class SyncMan {
 		return bConfirmation;
 	}
 
-	private async handleTaskItem(lineText: string, fileMap: FileMap, lineNumber: number | undefined) {
+	async handleTaskItem(lineText: string, fileMap: FileMap, lineNumber: number | undefined) {
 		let modified = false;
 		let added = false;
 		//it's a task. Is it a task item?
@@ -1526,7 +1542,8 @@ export class SyncMan {
 			if (itemId) {
 				const oldItem = parentTask.items.find((item) => item.id == itemId);
 				if (oldItem) {
-					if (oldItem.title.trim() != newItem.description.trim()) {
+					if (oldItem.title.trim() != newItem.description.trim() ||
+						oldItem.status != (newItem?.status ? 2 : 0)) {
 						oldItem.title = newItem?.description.trim();
 						oldItem.status = newItem?.status ? 2 : 0;
 						modified = true;
@@ -1573,9 +1590,6 @@ export class SyncMan {
 			if (parentTask) {
 				const filepath = fileMap.getFilePath();
 				modified = await this.updateTask(parentTask, filepath);
-				if (modified) {
-					await this.plugin.cacheOperation?.updateTaskToCache(parentTask, filepath);
-				}
 			}
 		}
 
@@ -1584,7 +1598,7 @@ export class SyncMan {
 
 	private async updateTask(parentTask: ITask, filepath: string) {
 		parentTask.modifiedTime = this.plugin.dateMan?.formatDateToISO(new Date());
-		await this.plugin.cacheOperation?.updateTaskToCache(parentTask);
+		await this.plugin.cacheOperation?.updateTaskToCache(parentTask, filepath, Date.now());
 		if (getSettings().fileLinksInTickTick !== 'noLink') {
 			let taskURL = this.plugin.taskParser?.getObsidianUrlFromFilepath(filepath);
 			//If getSettings().fileLinksInTickTick === "noteLink") it's already been handled in

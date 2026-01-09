@@ -95,9 +95,17 @@ export const updateSettings = (newSettings: Partial<ITickTickSyncSettings>): ITi
 };
 
 export const getDefaultFolder = (): string => {
-	if (settings.TickTickTasksFilePath === '/') {
+	let path = settings.TickTickTasksFilePath;
+	if (!path || path === '/') {
 		return '';
-	} else {
-		return settings.TickTickTasksFilePath;
 	}
+	// Remove leading slash
+	if (path.startsWith('/')) {
+		path = path.substring(1);
+	}
+	// Remove trailing slash
+	if (path.endsWith('/')) {
+		path = path.substring(0, path.length - 1);
+	}
+	return path;
 };
