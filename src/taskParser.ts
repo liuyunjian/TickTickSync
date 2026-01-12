@@ -106,7 +106,7 @@ export const REGEX = {
 	TickTick_TAG: new RegExp(`^[\\s]*[-] \\[[x ]\\] [\\s\\S]*${keywords.TickTick_TAG}[\\s\\S]*$`, 'i'),
 
 	TickTick_ID: /\[ticktick_id::\s*[\d\S]+\]/,
-	TickTick_ID_NUM: /\[ticktick_id::\s*(.*?)\]/,
+	TickTick_ID_NUM: /\[ticktick_id::\s*(.*?)\s*\]/,
 	TickTick_ID_DV_NUM: /ticktick_id(.*?)%/,
 	TickTick_LINK: /\[link\]\(.*?\)/,
 	DUE_DATE_WITH_EMOJ: new RegExp(`(${keywords.DUE_DATE})\\s?\\d{4}-\\d{2}-\\d{2}`), // DUE_DATE : new RegExp(`(?:${keywords.DUE_DATE})\\s?(\\d{4}-\\d{2}-\\d{2})`),
@@ -370,9 +370,7 @@ export class TaskParser {
 
 		let actualStartDate = allDatesStruct?.startDate ?
 			allDatesStruct?.startDate.isoDate : //there's a start date
-			allDatesStruct?.scheduled_date ?
-				allDatesStruct?.scheduled_date.isoDate //there's a scheduled date
-				: allDatesStruct?.dueDate ? //there are neither start date nor scheduled date.
+			allDatesStruct?.dueDate ? //there are neither start date nor scheduled date.
 					allDatesStruct?.dueDate.isoDate : '';  //use the due date if there is one.
 
 
@@ -506,7 +504,7 @@ export class TaskParser {
 			//try the dataview version
 			result = REGEX.TickTick_ID_DV_NUM.exec(text);
 		}
-		return result ? result[1] : undefined;
+		return result ? result[1].trim() : undefined;
 	}
 
 	isTaskOpen(line: string) {

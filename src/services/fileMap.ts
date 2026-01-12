@@ -156,14 +156,23 @@ export class FileMap {
 		}
 	}
 
-	deleteTasks(ids: string[]) {
+	deleteTasks(ids: string[]): string[] {
 		const tasksWithIndices = ids.map(id => ({ id, index: this.getTaskIndex(id) }))
 			.filter(t => t.index !== -1)
 			.sort((a, b) => b.index - a.index); // Sort descending
 
+		log.debug(`FileMap: Found ${tasksWithIndices.length} out of ${ids.length} tasks for deletion in file ${this.file.path}`);
 		for (const t of tasksWithIndices) {
-			this.deleteTaskAndLines(t.id);
+			this.deleteTaskAndLinesAtIndex(t.index, t.id);
 		}
+		return tasksWithIndices.map(t => t.id);
+	}
+
+	private deleteTaskAndLinesAtIndex(taskIdx: number, id: string) {
+		const endLine = this.getTaskEndLineByIdx(taskIdx);
+		const linesToDelete = endLine - taskIdx + 1;
+		log.debug(`FileMap: Deleting ${linesToDelete} lines at index ${taskIdx} for task ${id} in ${this.file.path}`);
+		this.fileLines.splice(taskIdx, linesToDelete);
 	}
 
 	getFileLines(): string {
@@ -211,7 +220,20 @@ export class FileMap {
 			return -1;
 		}
 		const lowerID = ID.toLowerCase();
-		return this.fileLines.findIndex(str => this.plugin.taskParser.isMarkdownTask(str) && str.toLowerCase().includes(lowerID));
+		return this.fileLines.findIndex(str => {
+			if (!this.plugin.taskParser.isMarkdownTask(str)) {
+				return false;
+			}
+			const tickTickId = this.plugin.taskParser.getTickTickId(str);
+			if (tickTickId && tickTickId.toLowerCase() === lowerID) {
+				return true;
+			}
+			const lineItemId = this.plugin.taskParser.getLineItemId(str);
+			if (lineItemId && lineItemId.toLowerCase() === lowerID) {
+				return true;
+			}
+			return str.toLowerCase().includes(lowerID);
+		});
 	}
 
 	getTaskString(taskId: string): String {

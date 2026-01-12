@@ -221,21 +221,7 @@ export class DateMan {
 				dates.dueDate = this.getDateAndTime(task.dueDate, task.isAllDay, date_emoji.dueDate);
 				if (task.dueDate !== task.startDate) {
 					//If they're different also save off the startdate because it's a duration.
-					if (oldTask) {
-						if (oldTask.dateHolder.scheduled_date) {
-							//They used scheduled date. put the new start date in scheduled date.
-							dates.scheduled_date = this.getDateAndTime(task.startDate, task.isAllDay, date_emoji.scheduled_date);
-						} else {
-							//They either didn't used to have a start date, or had a start date. put the new start date in scheduled date
-							dates.startDate = this.getDateAndTime(task.startDate, task.isAllDay, date_emoji.startDate);
-						}
-						//pick up the rest of the dates from the old task.
-
-					} else {
-						//default to start date.
-						//TODO: maybe make it a preference in the future?
-						dates.startDate = this.getDateAndTime(task.startDate, task.isAllDay, date_emoji.startDate);
-					}
+14					dates.startDate = this.getDateAndTime(task.startDate, task.isAllDay, date_emoji.startDate);
 				}
 			}
 		}
@@ -250,7 +236,9 @@ export class DateMan {
 			if (oldTask.dateHolder.createdTime) {
 				dates.createdTime = oldTask.dateHolder.createdTime;
 			}
-
+			if (oldTask.dateHolder.scheduled_date) {
+				dates.scheduled_date = oldTask.dateHolder.scheduled_date;
+			}
 		}
 		task.dateHolder = dates;
 

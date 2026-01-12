@@ -10,6 +10,8 @@ import { FileMap } from '@/services/fileMap';
 //Logging
 import log from '@/utils/logger';
 import { FoundDuplicateTasksModal } from '@/modals/FoundDuplicateTasksModal';
+import { TaskDeletionModal } from '@/modals/TaskDeletionModal';
+import type { ITask } from '@/api/types/Task';
 import { getTick } from '@/api/tick_singleton_factory'
 import { syncTickTickWithDexie } from '@/sync/sync';
 import { db } from "@/db/dexie";
@@ -228,6 +230,8 @@ export class TickTickService {
 
 		log.debug(`Checking database for ${markdownFiles.length} markdown files and ${dbFiles.length} DB entries.`);
 
+		const tasksToDelete: { filepath: string, taskId: string, title: string }[] = [];
+
 		await doWithLock(LOCK_TASKS, async () => {
 			// 1. Ensure all vault files are in DB and match with projects if possible
 			for (const file of markdownFiles) {
@@ -267,26 +271,47 @@ export class TickTickService {
 
 			// 3. Consistency check for tasks and missed tasks
 			const metadatas = await this.cacheOperation?.getFileMetadatas();
+			if (!metadatas) return;
+
 			for (const filepath in metadatas) {
 				const value = metadatas[filepath];
 				const obsidianURL = this.plugin.taskParser.getObsidianUrlFromFilepath(filepath);
 
-				for (const taskDetails of value.TickTickTasks) {
-					const localTask = await this.cacheOperation?.loadLocalTaskFromCacheID(taskDetails.taskId);
+				const file = vault.getAbstractFileByPath(filepath);
+				if (!(file instanceof TFile)) continue;
+
+				const fileMap = new FileMap(this.plugin.app, this.plugin, file);
+				await fileMap.init();
+				
+				// We check tasks actually in the file and tasks the DB thinks are in the file
+				const dbTaskIds = value.TickTickTasks.map(t => t.taskId);
+				const physicalTaskIds = fileMap.getTasks();
+				const allTaskIds = Array.from(new Set([...dbTaskIds, ...physicalTaskIds]));
+
+				for (const taskId of allTaskIds) {
+					const localTask = await this.cacheOperation?.loadLocalTaskFromCacheID(taskId);
 					let taskObject = localTask?.task;
 
-					if (localTask && (!localTask.lastVaultSync || localTask.lastVaultSync < localTask.updatedAt)) {
-						log.debug(`Cleaning up sync timestamps for task ${taskDetails.taskId} in ${filepath}`);
+					// Check if marked as deleted in DB
+					if (localTask?.deleted === true || taskObject?.deleted === 1) {
+						log.debug("pushing because marked as deleted in DB: ", filepath, taskObject?.title || taskId)
+						tasksToDelete.push({ filepath, taskId: taskId, title: taskObject?.title || taskId });
+						continue;
+					}
+
+					if (localTask && (!localTask.lastVaultSync || localTask.lastVaultSync < localTask.updatedAt || !localTask.file)) {
+						log.debug(`Cleaning up sync timestamps for task ${taskId} in ${filepath}`);
 						await this.cacheOperation.updateTaskToCache(localTask.task, filepath, Date.now());
 					}
 
 					if (!taskObject) {
 						// Try to get from TickTick
 						try {
-							taskObject = await this.plugin.tickTickRestAPI?.getTaskById(taskDetails.taskId);
+							taskObject = await this.plugin.tickTickRestAPI?.getTaskById(taskId);
 							if (taskObject) {
 								if (taskObject.deleted === 1) {
-									await this.cacheOperation?.deleteTaskIdFromMetadata(filepath, taskDetails.taskId);
+									log.debug("pushing because marked as deleted in TickTick: ", filepath, taskObject?.title)
+									tasksToDelete.push({ filepath, taskId: taskId, title: taskObject.title });
 									continue;
 								}
 								// If found, update cache and mark as synced to vault
@@ -294,10 +319,11 @@ export class TickTickService {
 							}
 						} catch (error) {
 							if (error.message?.includes('404')) {
-								await this.cacheOperation?.deleteTaskIdFromMetadata(filepath, taskDetails.taskId);
+								log.debug("pushing because not found: ", filepath, taskId)
+								tasksToDelete.push({ filepath, taskId: taskId, title: taskId });
 								continue;
 							}
-							log.error(`Error loading task ${taskDetails.taskId} from API:`, error);
+							log.error(`Error loading task ${taskId} from API:`, error);
 							continue;
 						}
 					}
@@ -331,6 +357,36 @@ export class TickTickService {
 				}
 			}
 		});
+		log.debug(`Finished checking database for ${markdownFiles.length} markdown files and ${dbFiles.length} DB entries.`);
+		log.debug(`Found ${tasksToDelete.length} tasks to be deleted.`);
+		if (tasksToDelete.length > 0) {
+			const items = tasksToDelete.map(t => ({
+				title: this.plugin.taskParser.stripOBSUrl(t.title),
+				filePath: t.filepath
+			}));
+			const modal = new TaskDeletionModal(this.plugin.app, items, 'they are deleted in TickTick or marked as deleted in the database.', (result) => { });
+			const confirmed = await modal.showModal();
+			if (confirmed) {
+				await doWithLock(LOCK_TASKS, async () => {
+					const byFile: Record<string, Set<string>> = {};
+					for (const t of tasksToDelete) {
+						if (!byFile[t.filepath]) byFile[t.filepath] = new Set();
+						byFile[t.filepath].add(t.taskId);
+					}
+					for (const [path, taskIdSet] of Object.entries(byFile)) {
+						const taskIds = Array.from(taskIdSet);
+						const file = this.plugin.app.vault.getAbstractFileByPath(path);
+						if (file instanceof TFile) {
+							log.debug(`Deleting ${taskIds.length} tasks from ${path}`);
+							await this.plugin.fileOperation?.deleteTasksFromSpecificFile(file, taskIds.map(id => ({ id } as ITask)), false);
+						}
+						for (const taskId of taskIds) {
+							await this.cacheOperation?.deleteTaskIdFromMetadata(path, taskId);
+						}
+					}
+				});
+			}
+		}
 
 		await this.plugin.saveSettings();
 		new Notice(`Database check completed.`);

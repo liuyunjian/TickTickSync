@@ -108,9 +108,18 @@ export class CacheOperation {
 
 	async getFileMetadatas(): Promise<FileMetadata> {
 		const files = await getAllFiles();
+		const allTasks = await db.tasks.toArray();
+		const tasksByFile = new Map<string, LocalTask[]>();
+		for (const lt of allTasks) {
+			if (lt.file) {
+				if (!tasksByFile.has(lt.file)) tasksByFile.set(lt.file, []);
+				tasksByFile.get(lt.file)!.push(lt);
+			}
+		}
+
 		const metadata: FileMetadata = {};
 		for (const file of files) {
-			const tasksInFile = await db.tasks.where("file").equals(file.path).toArray();
+			const tasksInFile = tasksByFile.get(file.path) || [];
 			metadata[file.path] = {
 				TickTickTasks: tasksInFile.map(lt => ({
 					taskId: lt.taskId,

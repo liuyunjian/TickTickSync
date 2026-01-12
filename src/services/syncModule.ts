@@ -365,7 +365,7 @@ export class SyncMan {
 			} else {
 				//this should only be necessary for a while, until they update all tasks
 				if (!savedTask.dateHolder) {
-					savedTask.dateHolder = this.plugin.dateMan?.getEmptydateHolder();
+					this.plugin.dateMan?.addDateHolderToTask(savedTask, undefined);
 					await this.plugin.cacheOperation?.updateTaskToCache(savedTask, null, Date.now());
 				}
 				if (!savedTask.lineHash) {
@@ -984,7 +984,7 @@ export class SyncMan {
 		// 1. Handle Deletions (Grouped confirmation)
 		const tasksToConfirmDeletionIds: string[] = [];
 		for (const group of fileGroups.values()) {
-			tasksToConfirmDeletionIds.push(...group.toDelete.map(t => t.id));
+			tasksToConfirmDeletionIds.push(...group.toDelete.map(t => (t.id || (t as any).taskId)));
 		}
 
 		let proceedWithDeletions = true;
@@ -1005,7 +1005,7 @@ export class SyncMan {
 				}
 				for (const task of group.toDelete) {
 					// Clear the file field since it's gone from vault, but KEEP the record in Dexie as a tombstone
-					const lt = tasks.find(t => t.task.id === task.id);
+					const lt = tasks.find(t => t.taskId === (task.id || (task as any).taskId));
 					if (lt) {
 						dbUpdates.push({ localId: lt.localId, changes: { file: "" } });
 					}
@@ -1505,6 +1505,9 @@ export class SyncMan {
 	}
 
 	async handleTaskItem(lineText: string, fileMap: FileMap, lineNumber: number | undefined) {
+		if (lineText.contains("Copy Tasks from")) {
+			log.debug("Copy Tasks from found.");
+		}
 		let modified = false;
 		let added = false;
 		//it's a task. Is it a task item?

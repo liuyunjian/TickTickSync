@@ -121,6 +121,9 @@ export class TickTickRestAPI {
 		await this.initializeAPI();
 		try {
 			const newTask = await this.api?.addTask(taskToAdd);
+			if (newTask) {
+				this.plugin.dateMan?.addDateHolderToTask(newTask, undefined);
+			}
 			return newTask;
 		} catch (error) {
 			throw new Error(`Error adding task: ${error.message}`);
@@ -155,6 +158,9 @@ export class TickTickRestAPI {
 			//TODO: ALL Tasks are fetched. Evaluate filtering.
 			// log.debug("getting all tasks, look into filtering.")
 			const result = await this.api?.getTasks();
+			if (result) {
+				result.forEach(t => this.plugin.dateMan?.addDateHolderToTask(t, undefined));
+			}
 			return result;
 		} catch (error) {
 			throw new Error(`Error get active tasks: ${error.message}`);
@@ -249,6 +255,9 @@ export class TickTickRestAPI {
 
 		try {
 			const task = await this.api?.getTask(taskId, projectId);
+			if (task) {
+				this.plugin.dateMan?.addDateHolderToTask(task, undefined);
+			}
 			return task;
 		} catch (error) {
 			if (error.response && error.response.status) {
@@ -346,8 +355,10 @@ export class TickTickRestAPI {
 		try {
 			const result = await this.api.getUpdatedTasks(since);
 			this._checkpoint = this.api.checkpoint;
+			if (result.update) {
+				result.update.forEach(t => this.plugin.dateMan?.addDateHolderToTask(t, undefined));
+			}
 			return result;
-
 		} catch (error) {
 			log.error('Error get updated tasks', error);
 		}

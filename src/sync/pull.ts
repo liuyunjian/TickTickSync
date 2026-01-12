@@ -34,6 +34,11 @@ export async function pullFromTickTick(
 		const local = localMap.get(remoteId);
 		const remoteUpdatedAt = rt.modifiedTime ? new Date(rt.modifiedTime).getTime() : Date.now();
 
+		// Ensure dateHolder is correctly merged with local task if available
+		if (local) {
+			ticktickRestApi.plugin.dateMan?.addDateHolderToTask(rt, local.task);
+		}
+
 		// Ignore our own echoes
 		if (local && local.lastModifiedByDeviceId === meta.deviceId && remoteUpdatedAt <= local.updatedAt) {
 			continue;

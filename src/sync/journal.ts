@@ -32,3 +32,7 @@ export function logSyncEvent(
 export function getSyncJournal() {
 	return [...journal];
 }
+
+export function clearJournal() {
+	journal.length = 0;
+}

@@ -289,7 +289,7 @@ export class FileOperation {
 		await this.deleteTasksFromSpecificFile(filePath, [task], bConfirmDialog);
 	}
 
-	async deleteTasksFromSpecificFile(filePath: TFile, tasks: ITask[], bConfirmDialog: boolean) {
+	async deleteTasksFromSpecificFile(filePath: TFile, tasks: ITask[], bConfirmDialog: boolean): Promise<string[]> {
 		// Get the file object and update the content
 		if (bConfirmDialog) {
 			const items: DeletionItem[] = tasks.map(t => ({
@@ -307,10 +307,18 @@ export class FileOperation {
 		const fileMap: FileMap = new FileMap(this.app, this.plugin, filePath);
 		await fileMap.init();
 
-		fileMap.deleteTasks(tasks.map(t => t.id));
+		const oldContent = fileMap.getFileLines();
+		const deletedIds = fileMap.deleteTasks(tasks.map(t => (t.id || (t as any).taskId)));
 		const newContent = fileMap.getFileLines();
-		await this.app.vault.modify(filePath, newContent);
+		
+		if (oldContent !== newContent) {
+			await this.app.vault.modify(filePath, newContent);
+			log.info(`File ${filePath.path} modified with deletions.`);
+		} else {
+			log.warn(`No changes made to file ${filePath.path} during deletion attempt. Could not find tasks in file.`);
+		}
 		this.plugin.lastLines.set(filePath.path, newContent.length);
+		return deletedIds;
 	}
 
 	async deleteTaskFromFile(task: ITask) {
