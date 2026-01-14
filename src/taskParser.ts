@@ -295,7 +295,7 @@ export class TaskParser {
 		}
 
 		//Detect parentID
-		if (lineTextTabIndentation > 0) {
+		if (taskRecord.parentId && taskRecord.parentId.length > 0) {
 			parentId = taskRecord.parentId;
 			hasParent = true;
 			// log.debug(`parent id is ${parentId}`)
@@ -640,6 +640,15 @@ export class TaskParser {
 			tabs = tabs + '\t';
 		}
 		return tabs;
+	}
+
+	getIndentation(lineText: string) {
+		const match = lineText.match(/^([\s\t>]*)/);
+		if (match) {
+			return match[1];
+		} else {
+			return '';
+		}
 	}
 
 	// Task priority from 0 (none) to 4 (urgent).

@@ -506,15 +506,27 @@ private getTaskLinesByIdx(taskIdx: number, taskRecord: ITaskRecord) {
 	}
 
 	private getParentIDByIdx(taskIdx: number) {
-		let childNumTabs: number = this.plugin.taskParser.getNumTabs(this.fileLines[taskIdx]);
+		if (taskIdx < 0 || taskIdx >= this.fileLines.length) {
+			return '';
+		}
+		const childLine = this.fileLines[taskIdx];
+		let childNumTabs: number = this.plugin.taskParser.getNumTabs(childLine);
+		const childIndentation = this.plugin.taskParser.getIndentation(childLine);
+
 		let tickTickId = '';
 		for (let i = taskIdx - 1; i >= 0; i--) {
 			const line = this.fileLines[i];
 			//the first Task above this one with tabs less than this one. is the parent.
 			if (this.plugin.taskParser.isMarkdownTask(line)) {
-				const lineNumbTabs = this.plugin.taskParser.getNumTabs(this.fileLines[i]);
+				const lineNumbTabs = this.plugin.taskParser.getNumTabs(line);
+				const lineIndentation = this.plugin.taskParser.getIndentation(line);
 				const tempTickTickId = this.plugin.taskParser.getTickTickId(line);
 				if (lineNumbTabs < childNumTabs) {
+					//found the parent. If tempTickTickId is null, it's a task that has not been added yet.
+					// We'll deal with it later.'
+					tickTickId = tempTickTickId ? tempTickTickId : '';
+					break;
+				} else if (lineNumbTabs === childNumTabs && childIndentation.startsWith(lineIndentation) && childIndentation.length > lineIndentation.length) {
 					//found the parent. If tempTickTickId is null, it's a task that has not been added yet.
 					// We'll deal with it later.'
 					tickTickId = tempTickTickId ? tempTickTickId : '';
