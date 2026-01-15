@@ -94,19 +94,16 @@
 			<div class="setting-item-description">Allow access to developer settings</div>
 		</div>
 		<div class="setting-item-control">
-			<label class="toggle-switch">
+			<label class="checkbox-container" class:is-enabled={debugMode}>
 				<input
 					type="checkbox"
 					bind:checked={debugMode}
-					on:change={async (e) => {
-							const checked = e.target.checked;
-							debugMode = checked; // Ensure local state stays in sync
+					on:change={async () => {
 							const logLevel = getSettings().logLevel;
-							updateSettings({ debugMode: checked , logLevel: checked ? logLevel : 'info'});
+							updateSettings({ debugMode: debugMode , logLevel: debugMode ? logLevel : 'info'});
 							await plugin.saveSettings();
 					  }}
 				/>
-				<span class="slider"></span>
 			</label>
 		</div>
 	</div>

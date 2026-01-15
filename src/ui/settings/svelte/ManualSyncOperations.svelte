@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { getSettings, updateSettings } from '@/settings';
+	import { settingsStore } from '@/ui/settings/settingsstore';
 	import type TickTickSync from '@/main';
 	import { Notice, Setting, TFolder } from 'obsidian';
 	import { FolderSuggest } from '@/utils/FolderSuggester';
@@ -31,7 +32,7 @@
 				search.setPlaceholder('Select or Create folder')
 					.setValue(getSettings().bkupFolder);
 				search.setValue(folderOptions[getSettings().bkupFolder]);
-				new FolderSuggest(search.inputEl, app);
+				new FolderSuggest(search.inputEl, plugin.app);
 				search.onChange((value) => {
 					if (debounceTimeout) clearTimeout(debounceTimeout);
 
@@ -50,7 +51,7 @@
 
 
 	function getFolderOptions() {
-		const folders = app.vault.getAllFolders(true);
+		const folders = plugin.app.vault.getAllFolders(true);
 		const folderOptions: Record<string, string> = {};
 		for (const folder of folders) {
 			folderOptions[folder.path] = folder.name;
@@ -117,18 +118,16 @@
 				<div class="setting-item-description">Skip backup on startup</div>
 			</div>
 			<div class="setting-item-control">
-				<label class="toggle-switch">
+				<label class="checkbox-container" class:is-enabled={$settingsStore.skipBackup}>
 					<input
 						type="checkbox"
-						checked={getSettings().skipBackup}
+						checked={$settingsStore.skipBackup}
 						on:change={async (e) => {
-              updateSettings({ skipBackup: e.target.checked });
-              await plugin.saveSettings();
-            }}
+							updateSettings({ skipBackup: e.target.checked });
+							await plugin.saveSettings();
+						}}
 					/>
-					<span class="slider"></span>
 				</label>
-
 			</div>
 		</div>
 		<div class="setting-item">

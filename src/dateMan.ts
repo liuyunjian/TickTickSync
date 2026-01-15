@@ -221,7 +221,7 @@ export class DateMan {
 				dates.dueDate = this.getDateAndTime(task.dueDate, task.isAllDay, date_emoji.dueDate);
 				if (task.dueDate !== task.startDate) {
 					//If they're different also save off the startdate because it's a duration.
-14					dates.startDate = this.getDateAndTime(task.startDate, task.isAllDay, date_emoji.startDate);
+					dates.startDate = this.getDateAndTime(task.startDate, task.isAllDay, date_emoji.startDate);
 				}
 			}
 		}
