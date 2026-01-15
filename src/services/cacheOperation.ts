@@ -231,7 +231,7 @@ export class CacheOperation {
 
 	async filepathHasDefaultProjectID(filepath: string) {
 		const file = await getFile(filepath);
-		if (!file || file.defaultProjectId) {
+		if (file && file.defaultProjectId) {
 			return true;
 		} else {
 			return false;
@@ -255,14 +255,16 @@ export class CacheOperation {
 				(projectId === getSettings().defaultProjectId)) { //highly unlikely, but just in case
 				//They don't have a file for the Inbox. If they have a default project, return that.
 				if (getSettings().defaultProjectName) {
-					return getDefaultFolder() +"/"+ getSettings().defaultProjectName + ".md"
+					const folder = getDefaultFolder();
+					return (folder ? folder + "/" : "") + getSettings().defaultProjectName + ".md"
 				}
 			}
 
 			//otherwise, return the project name as a md file and hope for the best.
 			const filePath = await this.getProjectNameByIdFromCache(projectId/*, getSettings().keepProjectFolders*/);
 			if (filePath) {
-				return getDefaultFolder() +"/"+ filePath + FILE_EXT;
+				const folder = getDefaultFolder();
+				return (folder ? folder + "/" : "") + filePath + FILE_EXT;
 			} else {
 				//Not a file that's in fileMetaData, not the inbox no default project set
 				const errmsg = `File path not found for ${projectId}, returning ${filePath} instead.`;
@@ -270,10 +272,11 @@ export class CacheOperation {
 				throw new Error(errmsg);
 			}
 		} else {
+			const folder = getDefaultFolder();
 			if (getSettings().defaultProjectName) {
-				return getDefaultFolder() + "/" + getSettings().defaultProjectName + FILE_EXT;
+				return (folder ? folder + "/" : "") + getSettings().defaultProjectName + FILE_EXT;
 			} else {
-				return getDefaultFolder() + "/" + "Inbox" + FILE_EXT;
+				return (folder ? folder + "/" : "") + "Inbox" + FILE_EXT;
 			}
 		}
 	}

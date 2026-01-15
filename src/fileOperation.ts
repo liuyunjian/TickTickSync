@@ -192,14 +192,22 @@ export class FileOperation {
 			try {
 				file = await this.app.vault.create(taskFile, `== Added by ${whoAdded} == `);
 				if (projectId) {
-					await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
+					// Only associate if this file is actually the one intended for this project
+					const expectedFilepath = await this.plugin.cacheOperation.getFilepathForProjectId(projectId);
+					if (expectedFilepath && expectedFilepath.replace(/^\//, '') === taskFile) {
+						await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
+					}
 				}
 			} catch (error) {
 				if (error.message.includes('File already exists')) {
 					log.info('Attempting to find existing file', taskFile);
 					file = this.app.vault.getAbstractFileByPath(taskFile);
 					if (projectId) {
-						await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
+						// Only associate if this file is actually the one intended for this project
+						const expectedFilepath = await this.plugin.cacheOperation.getFilepathForProjectId(projectId);
+						if (expectedFilepath && expectedFilepath.replace(/^\//, '') === taskFile) {
+							await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
+						}
 					}
 					if (!file) {
 						const fileName = taskFile.split('/').pop();
@@ -415,6 +423,18 @@ export class FileOperation {
 				file = await this.getOrCreateDefaultFile(taskFile, projectTasks[0].projectId);
 				if (file && file instanceof TFile) {
 					log.debug('Created/found new file: ', file.path);
+				}
+			} else {
+				// File exists on disk. Ensure it's in our database association.
+				const hasAssociation = await this.plugin.cacheOperation.filepathHasDefaultProjectID(taskFile);
+				if (!hasAssociation && projectTasks.length > 0) {
+					const projectId = projectTasks[0].projectId;
+					// Only associate if this file is actually the one intended for this project,
+					// or if it's the global default project file.
+					const expectedFilepath = await this.plugin.cacheOperation.getFilepathForProjectId(projectId);
+					if (expectedFilepath && expectedFilepath.replace(/^\//, '') === taskFile) {
+						await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
+					}
 				}
 			}
 		}

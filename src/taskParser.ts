@@ -601,22 +601,7 @@ export class TaskParser {
 	isProjectIdChanged(lineTask: ITask, TickTickTask: ITask) {
 		if (lineTask.projectId !== TickTickTask.projectId) {
 			log.debug('Project ID changed: ', lineTask.projectId, TickTickTask.projectId);
-			//make sure that they're not in a non-project file.
-			const taskFile = this.plugin.cacheOperation.getFilepathForTask(TickTickTask.id);
-			if (taskFile) {
-				// log.debug('Task file: ', taskFile);
-				const hasADefaultProject = this.plugin.cacheOperation.filepathHasDefaultProjectID(taskFile)
-				if (hasADefaultProject) {
-					return true;
-				} else {
-					log.debug('Task file does not have a default project: ', taskFile);
-					//hate to do a notification from here, but I don't want to blindside them either.
-					new Notice(`Task ${TickTickTask.title} was moved in TickTick, but is in ${taskFile}. Assuming that this is intentional and not moving it.`, 10000	);
-
-					return false;
-				}
-
-			}
+			return true;
 		} else {
 			return false;
 		}
