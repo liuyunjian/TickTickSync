@@ -108,22 +108,23 @@ export class TickTickService {
 
 	async synchronization(fullSync: boolean = false) {
 		try {
-			// Populate task cache for fast lookups during sync
-			await this.cacheOperation.fillTaskCache();
+			// NEW: Use TaskCache
+			await this.plugin.taskCache.fill();
 
 			await doWithLock(LOCK_TASKS, async () => {
 				if (this.plugin.tickTickRestAPI) {
 					await this.saveProjectsToCache();
 					await syncTickTickWithDexie(this.plugin.tickTickRestAPI, fullSync);
-					await this.tickTickSync.syncVaultWithDexie();
+					//NEW: Use VaultSyncCoordinator
+					await this.plugin.vaultSyncCoordinator.syncVaultWithDatabase();
 				}
 			});
 			await this.syncFiles(false);
 		} catch (error) {
 			log.error('Error on synchronization: ', error);
 		} finally {
-			// Clear cache to free memory
-			this.cacheOperation.clearTaskCache();
+			// NEW: Clear TaskCache
+			this.plugin.taskCache.clear();
 		}
 	}
 
@@ -152,36 +153,29 @@ export class TickTickService {
 
 	async deletedTaskCheck(filePath: string | null) {
 		return await doWithLock(LOCK_TASKS, async () => {
-			return this.tickTickSync?.deletedTaskCheck(filePath);
+			//NEW: Use TaskDeletionHandler
+			await this.plugin.taskDeletionHandler.checkFileForDeletedTasks(filePath);
 		});
 	}
 
 	async deletedFileCheck(filePath: string): Promise<boolean> {
-
-		const fileMetadata = await this.cacheOperation?.getFileMetadata(filePath, null);
-		if (!fileMetadata || !fileMetadata.TickTickTasks) {
-			//log.debug('There is no task in the deleted file')
+		//NEW: Use FileTaskQueries
+		const hasTasks = await this.plugin.fileTaskQueries.fileHasTasks(filePath);
+		if (!hasTasks) {
 			return false;
 		}
-		//TODO
-		// if (!(this.checkModuleClass())) {
-		// 	return false;
-		// }
 
 		await doWithLock(LOCK_TASKS, async () => {
-			await this.tickTickSync.deletedTaskCheck(filePath);
-			await this.cacheOperation.deleteFilepathFromMetadata(filePath);
+			//NEW: Use TaskDeletionHandler
+			await this.plugin.taskDeletionHandler.handleFileDeleted(filePath);
 		});
 		return true;
 	}
 
 	async renamedFileCheck(filePath: string, oldPath: string): Promise<boolean> {
-		// log.debug(`${oldPath} is renamed`)
-		//Read fileMetadata
-		//const fileMetadata = await this.fileOperation.getFileMetadata(file)
-		const fileMetadata = await this.cacheOperation?.getFileMetadata(oldPath, null);
-		if (!fileMetadata || !fileMetadata.TickTickTasks) {
-			//log.debug('There is no task in the deleted file')
+		//NEW: Use FileTaskQueries
+		const hasTasks = await this.plugin.fileTaskQueries.fileHasTasks(oldPath);
+		if (!hasTasks) {
 			return false;
 		}
 		//TODO
@@ -190,7 +184,8 @@ export class TickTickService {
 		// }
 
 		await doWithLock(LOCK_TASKS, async () => {
-			await this.tickTickSync.updateTaskContent(filePath);
+			//NEW: Use TaskOperationsService
+			await this.plugin.taskOperationsService.updateTaskContentForFile(filePath);
 			await this.cacheOperation.updateRenamedFilePath(oldPath, filePath);
 		});
 		return true;
@@ -198,13 +193,15 @@ export class TickTickService {
 
 	async fullTextNewTaskCheck(filepath: string) {
 		await doWithLock(LOCK_TASKS, async () => {
-			await this.tickTickSync?.fullTextNewTaskCheck(filepath);
+			//NEW: Use TaskModificationDetector
+			await this.plugin.taskModificationDetector.checkFileForNewTasks(filepath);
 		});
 	}
 
 	async lineNewContentTaskCheck(editor: Editor, info: MarkdownView | MarkdownFileInfo) {
 		return await doWithLock(LOCK_TASKS, async () => {
-			await this.tickTickSync?.lineNewContentTaskCheck(editor, info);
+			//NEW: Use TaskModificationDetector
+			await this.plugin.taskModificationDetector.checkLineForNewTask(editor, info);
 		});
 	}
 
@@ -213,7 +210,8 @@ export class TickTickService {
 			const file = this.plugin.app.vault.getAbstractFileByPath(filepath) as TFile;
 			const fileMap = new FileMap(this.plugin.app, this.plugin, file);
 			await fileMap.init();
-			return this.tickTickSync?.lineModifiedTaskCheck(filepath, lastLineText, lastLine, fileMap);
+			//NEW: Use TaskModificationDetector
+			return await this.plugin.taskModificationDetector.checkLineForModifications(filepath, lastLineText, lastLine, fileMap);
 		});
 	}
 
@@ -286,6 +284,11 @@ export class TickTickService {
 				// We check tasks actually in the file and tasks the DB thinks are in the file
 				const dbTaskIds = value.TickTickTasks.map(t => t.taskId);
 				const physicalTaskIds = fileMap.getTasks();
+				//NEW: Use FileTaskQueries for duplicate detection
+				const duplicates = await this.plugin.fileTaskQueries.findDuplicateTasks(filepath);
+				if (duplicates.length > 0) {
+					log.warn(`Found ${duplicates.length} duplicate tasks in ${filepath}:`, duplicates.map(d => d.taskId));
+				}
 				const allTaskIds = Array.from(new Set([...dbTaskIds, ...physicalTaskIds]));
 
 				for (const taskId of allTaskIds) {
@@ -348,9 +351,10 @@ export class TickTickService {
 						await this.plugin.fileOperation?.addTickTickLinkToFile(filepath);
 					}
 
-					await this.tickTickSync?.fullTextNewTaskCheck(filepath);
+					//NEW: Use TaskModificationDetector and TaskDeletionHandler
+					await this.plugin.taskModificationDetector.checkFileForNewTasks(filepath);
 					await this.tickTickSync?.fullTextModifiedTaskCheck(filepath);
-					await this.tickTickSync?.deletedTaskCheck(filepath);
+					await this.plugin.taskDeletionHandler.checkFileForDeletedTasks(filepath);
 
 				} catch (error) {
 					log.error(`Error scanning file ${filepath}:`, error);
@@ -398,11 +402,13 @@ export class TickTickService {
 	 */
 
 	async closeTask(taskId: string) {
-		await this.tickTickSync.closeTask(taskId);
+		//NEW: Use TaskOperationsService
+		await this.plugin.taskOperationsService.closeTask(taskId);
 	}
 
 	async openTask(taskId: string): Promise<void> {
-		await this.tickTickSync.reopenTask(taskId);
+		//NEW: Use TaskOperationsService
+		await this.plugin.taskOperationsService.reopenTask(taskId);
 	}
 
 	private async syncTickTickToObsidian(): Promise<boolean> {
@@ -478,7 +484,8 @@ export class TickTickService {
 				}
 
 				try {
-					await this.tickTickSync?.fullTextNewTaskCheck(fileKey);
+					//NEW: Use TaskModificationDetector
+					await this.plugin.taskModificationDetector.checkFileForNewTasks(fileKey);
 				} catch (error) {
 					log.error('An error occurred in fullTextNewTaskCheck:', error);
 				}
@@ -490,7 +497,8 @@ export class TickTickService {
 				}
 
 				try {
-					await this.tickTickSync?.deletedTaskCheck(fileKey);
+					//NEW: Use TaskDeletionHandler
+					await this.plugin.taskDeletionHandler.checkFileForDeletedTasks(fileKey);
 				} catch (error) {
 					log.error('An error occurred in deletedTaskCheck:', error);
 				}

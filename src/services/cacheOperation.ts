@@ -42,6 +42,10 @@ export class CacheOperation {
 		this.plugin = plugin;
 	}
 
+	/**
+	 * @deprecated Use TaskCache.fill() instead
+	 * This method will be removed in a future version
+	 */
 	async fillTaskCache() {
 		try {
 			const tasks = await db.tasks.toArray();
@@ -51,6 +55,10 @@ export class CacheOperation {
 		}
 	}
 
+	/**
+	 * @deprecated Use TaskCache.clear() instead
+	 * This method will be removed in a future version
+	 */
 	clearTaskCache() {
 		this.taskCache = null;
 	}
@@ -325,6 +333,10 @@ export class CacheOperation {
 		}
 	}
 
+	/**
+	 * @deprecated Use TaskRepository.upsertTask() instead
+	 * This method will be removed in a future version
+	 */
 	//Append to Cache file
 	async appendTaskToCache(task: ITask, filePath: string, lastVaultSync?: number) {
 		try {
@@ -346,6 +358,10 @@ export class CacheOperation {
 		}
 	}
 
+	/**
+	 * @deprecated Use TaskRepository.loadTaskById() instead
+	 * This method will be removed in a future version
+	 */
 	//Read the task with the specified id
 	async loadTaskFromCacheID(taskId?: string): Promise<ITask | undefined> {
 		if (!taskId) return undefined;
@@ -361,6 +377,10 @@ export class CacheOperation {
 		return undefined;
 	}
 
+	/**
+	 * @deprecated Use TaskRepository.loadLocalTaskById() instead
+	 * This method will be removed in a future version
+	 */
 	async loadLocalTaskFromCacheID(taskId?: string): Promise<LocalTask | undefined> {
 		if (!taskId) return undefined;
 		try {
@@ -390,6 +410,10 @@ export class CacheOperation {
 		}));
 	}
 
+	/**
+	 * @deprecated Use TaskRepository.upsertTask() instead
+	 * This method will be removed in a future version
+	 */
 	//Overwrite the task with the specified id in update
 	async updateTaskToCache(task: ITask, movedPath: string | null = null, lastVaultSync?: number) {
 		try {
@@ -431,6 +455,10 @@ export class CacheOperation {
 		return lt?.task.projectId;
 	}
 
+	/**
+	 * @deprecated Use TaskRepository.reopenTask() instead
+	 * This method will be removed in a future version
+	 */
 	//open a task status
 	async reopenTaskToCacheByID(taskId: string): Promise<string> {
 		try {
@@ -483,6 +511,10 @@ export class CacheOperation {
 	// }
 	// }
 
+	/**
+	 * @deprecated Use TaskRepository.closeTask() instead
+	 * This method will be removed in a future version
+	 */
 	//close a task status
 	async closeTaskToCacheByID(taskId: string): Promise<string> {
 		try {
@@ -502,6 +534,10 @@ export class CacheOperation {
 	}
 
 	//Delete task by ID
+	/**
+	 * @deprecated Use TaskRepository.deleteTask() instead
+	 * This method will be removed in a future version
+	 */
 	async deleteTaskFromCache(taskId: string) {
 		try {
 			await db.tasks.where("taskId").equals(taskId).delete();
@@ -512,6 +548,10 @@ export class CacheOperation {
 		}
 	}
 
+	/**
+	 * @deprecated Use TaskRepository.deleteTasks() instead
+	 * This method will be removed in a future version
+	 */
 	//Delete task through ID array
 	async deleteTaskFromCacheByIDs(deletedTaskIds: string[]) {
 		try {

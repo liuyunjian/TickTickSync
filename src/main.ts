@@ -45,6 +45,18 @@ import type { ITask } from '@/api/types/Task';
 import { getTasksByLabel, upsertLocalTask } from '@/db/tasks';
 import { detectDeviceLabel, generateDeviceId } from '@/db/device';
 
+//NEW: Repository layer
+import { TaskRepository } from '@/repositories/TaskRepository';
+import { FileTaskQueries } from '@/repositories/FileTaskQueries';
+import { TaskCache } from '@/repositories/TaskCache';
+
+//NEW: Service layer
+import { EventHandlerService } from '@/services/EventHandlerService';
+import { VaultSyncCoordinator } from '@/services/VaultSyncCoordinator';
+import { TaskModificationDetector } from '@/services/TaskModificationDetector';
+import { TaskDeletionHandler } from '@/services/TaskDeletionHandler';
+import { TaskOperationsService } from '@/services/TaskOperationsService';
+
 export default class TickTickSync extends Plugin {
 
 	readonly service: TickTickService = new TickTickService(this);
@@ -55,6 +67,17 @@ export default class TickTickSync extends Plugin {
 
 	readonly lastLines: Map<string, number> = new Map(); //lastLine object {path:line} is saved in lastLines map
 
+	//NEW: Repository layer
+	taskRepository!: TaskRepository;
+	fileTaskQueries!: FileTaskQueries;
+	taskCache!: TaskCache;
+
+	//NEW: Service layer
+	eventHandlerService!: EventHandlerService;
+	vaultSyncCoordinator!: VaultSyncCoordinator;
+	taskModificationDetector!: TaskModificationDetector;
+	taskDeletionHandler!: TaskDeletionHandler;
+	taskOperationsService!: TaskOperationsService;
 
 	tickTickRestAPI?: TickTickRestAPI;
 	statusBar?: HTMLElement;
@@ -100,6 +123,10 @@ export default class TickTickSync extends Plugin {
 		if (this.syncIntervalId) {
 			window.clearInterval(this.syncIntervalId);
 		}
+		//NEW: Cleanup event handler
+		this.eventHandlerService?.cleanup();
+		//NEW: Clear cache
+		this.taskCache?.clear();
 		log.debug(`TickTickSync unloaded!`);
 	}
 
@@ -153,6 +180,17 @@ export default class TickTickSync extends Plugin {
 
 		// Load Dexie first as it's the source of truth
 		await initDB();
+
+		//NEW: Initialize repositories
+		this.taskRepository = new TaskRepository();
+		this.fileTaskQueries = new FileTaskQueries();
+		this.taskCache = new TaskCache();
+
+		//NEW: Initialize services
+		this.vaultSyncCoordinator = new VaultSyncCoordinator(this.app, this);
+		this.taskModificationDetector = new TaskModificationDetector(this.app, this);
+		this.taskDeletionHandler = new TaskDeletionHandler(this.app, this);
+		this.taskOperationsService = new TaskOperationsService(this.app, this);
 
 		let devID = getSettings().deviceId;
 		let devLabel = getSettings().deviceLabel;
@@ -531,155 +569,9 @@ export default class TickTickSync extends Plugin {
 	}
 
 	private registerEvents() {
-		//Key event monitoring, judging line breaks and deletions
-		this.registerDomEvent(document, 'keyup', async (evt: KeyboardEvent) => {
-			if (!getSettings().token) {
-				return;
-			}
-
-			const editor = this.app.workspace.activeEditor?.editor;
-			if (!editor || !editor.hasFocus()) {
-				return;
-			}
-
-			if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'PageUp', 'PageDown'].includes(evt.key)) {
-				//trace( `${evt.key} arrow key is released`);
-				if (!this.checkModuleClass()) {
-					return;
-				}
-				await this.lineNumberCheck();
-			}
-
-			if (['Delete', 'Backspace'].includes(evt.key)) {
-				try {
-					//trace( `${evt.key} arrow key is released`);
-					if (!(this.checkModuleClass())) {
-						return;
-					}
-					await this.service.deletedTaskCheck(null);
-					await this.saveSettings();
-				} catch (error) {
-					log.warn(`An error occurred while deleting tasks: ${error}`);
-				}
-
-			}
-		});
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', async (evt: MouseEvent) => {
-			//Here for future debugging.
-			const { target } = evt;
-
-			if (!getSettings().token) {
-				return;
-			}
-
-			const editor = this.app.workspace.activeEditor?.editor;
-
-			// if (!editor || !editor.hasFocus()) {
-			// 	log.debug("bail no focus");
-			// 	return;
-			// }
-
-			if (!(this.checkModuleClass())) {
-				return;
-			}
-
-			await this.lineNumberCheck();
-
-			if (target && target.type === 'checkbox') {
-				await this.checkboxEventhandler(evt, editor);
-			}
-		});
-
-		let processTimeOut: ReturnType<typeof setTimeout>;
-		//hook editor-change event, if the current line contains #ticktick, it means there is a new task
-		//TODO: This gets called on every keystroke. Consider giving the user the option to only check for changes
-		//      keyup, or keyup and specific events (eg: enter, up-arrow, down-arrow)
-		//for now, we'll debounce it.
-		this.registerEvent(this.app.workspace.on('editor-change', async (editor: Editor, info: MarkdownView | MarkdownFileInfo) => {
-			if (processTimeOut) {
-				clearTimeout(processTimeOut);
-			}
-			processTimeOut = setTimeout(async () => {
-				try {
-					if (!getSettings().token) {
-						return;
-					}
-					if (getSettings().enableFullVaultSync) {
-						//we'll deal with modifications on full sync
-						return;
-					}
-
-
-					//TODO: lineNumberCheck also triggers a line modified check. I suspect this is redundant and
-					//      inefficient when a new task is being added. I've added returns out of there, but I need for find if the last line check
-					//      is needed for an add.
-					await this.lineNumberCheck();
-					if (!(this.checkModuleClass())) {
-						return;
-					}
-					await this.service.lineNewContentTaskCheck(editor, info);
-					await this.saveSettings();
-				} catch (error) {
-					log.error('An error occurred while check new task in line: ', error);
-				}
-			}, 1000);
-		}));
-
-		//Listen to the delete event
-		this.registerEvent(this.app.vault.on('delete', async (file) => {
-			if (file instanceof TFolder || !getSettings().token) {
-				//individual file deletes will be handled. I hope.
-				return;
-			}
-			const updated = await this.service.deletedFileCheck(file.path);
-			if (updated) {
-				await this.saveSettings();
-			}
-		}));
-
-		//Listen to the rename event and update the path in task data
-		this.registerEvent(this.app.vault.on('rename', async (file, oldPath) => {
-			if (file instanceof TFolder || !getSettings().token) {
-				//individual file rename will be handled. I hope.
-				return;
-			}
-			const updated = await this.service.renamedFileCheck(file.path, oldPath);
-			if (updated) {
-				await this.saveSettings();
-			}
-		}));
-
-
-		//Listen for file modified events and execute fullTextNewTaskCheck
-		this.registerEvent(this.app.vault.on('modify', async (file) => {
-			try {
-				// log.debug('modified.', file.name);
-				if (!getSettings().token) {
-					return;
-				}
-				const filepath = file.path;
-				//get current view
-				const activateFile = this.app.workspace.getActiveFile();
-				//To avoid conflicts, Do not check files being edited
-				if (activateFile?.path == filepath) {
-					//TODO: find out if they cut or pasted task(s) in here.
-					return;
-				}
-
-				await this.service.fullTextNewTaskCheck(filepath);
-			} catch (error) {
-				log.error('An error occurred while modifying the file: ', error);
-				// You can add further error handling logic here. For example, you may want to
-				// revert certain operations, or alert the user about the error.
-			}
-		}));
-
-		this.registerEvent(this.app.workspace.on('active-leaf-change', async (leaf) => {
-			await this.setStatusBarText();
-		}));
+		//NEW: Use EventHandlerService to manage all event registration
+		this.eventHandlerService = new EventHandlerService(this.app, this);
+		this.eventHandlerService.registerAll();
 	}
 
 	private async migrateData(data: any) {

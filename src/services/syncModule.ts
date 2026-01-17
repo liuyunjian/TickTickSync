@@ -36,6 +36,10 @@ export class SyncMan {
 		this.plugin = plugin;
 	}
 
+	/**
+	 * @deprecated Use TaskDeletionHandler.checkFileForDeletedTasks() instead
+	 * This method will be removed in a future version
+	 */
 	async deletedTaskCheck(file_path: string | null): Promise<void> {
 
 		let file;
@@ -155,6 +159,10 @@ export class SyncMan {
 		return missingTaskIds;
 	}
 
+	/**
+	 * @deprecated Use TaskModificationDetector.checkLineForNewTask() instead
+	 * This method will be removed in a future version
+	 */
 	async lineNewContentTaskCheck(editor: Editor, view: MarkdownView | MarkdownFileInfo): Promise<boolean> {
 		//const editor = this.app.workspace.activeEditor?.editor
 		//const view =this.app.workspace.getActiveViewOfType(MarkdownView)
@@ -222,6 +230,10 @@ export class SyncMan {
 		}
 	}
 
+	/**
+	 * @deprecated Use TaskModificationDetector.checkFileForNewTasks() instead
+	 * This method will be removed in a future version
+	 */
 	async fullTextNewTaskCheck(file_path: string): Promise<boolean> {
 		let file;
 		let currentFileValue;
@@ -268,6 +280,10 @@ export class SyncMan {
 		return true;
 	}
 
+	/**
+	 * @deprecated Use TaskModificationDetector.checkLineForModifications() instead
+	 * This method will be removed in a future version
+	 */
 	//Deal with Tasks and Task Items here because they are single line entities.
 	async lineModifiedTaskCheck(filepath: string | undefined, lineText: string, lineNumber: number | undefined, fileMap: FileMap): Promise<boolean> {
 		let modified = false;
@@ -755,6 +771,10 @@ export class SyncMan {
 		}
 	}
 
+	/**
+	 * @deprecated Use TaskOperationsService.closeTask() instead
+	 * This method will be removed in a future version
+	 */
 	// Close a task by calling API and updating JSON file
 	async closeTask(taskId: string): Promise<void> {
 		try {
@@ -768,6 +788,10 @@ export class SyncMan {
 		}
 	}
 
+	/**
+	 * @deprecated Use TaskOperationsService.reopenTask() instead
+	 * This method will be removed in a future version
+	 */
 	//open task
 	async reopenTask(taskId: string): Promise<void> {
 		try {
@@ -892,6 +916,10 @@ export class SyncMan {
 
 	//TODO: Determine deletion candidate
 
+	/**
+	 * @deprecated Use VaultSyncCoordinator.syncVaultWithDatabase() instead
+	 * This method will be removed in a future version
+	 */
 	/*
 	 * Synchronizes the tasks between TickTick and Obsidian.
 	 * //TODO: split this function into smaller functions
@@ -1384,6 +1412,10 @@ export class SyncMan {
 
 	}
 
+	/**
+	 * @deprecated Use TaskOperationsService.updateTaskContentForFile() instead
+	 * This method will be removed in a future version
+	 */
 	//After renaming the file, check all tasks in the file and update all links.
 	async updateTaskContent(filepath: string) {
 		const metadata = await this.plugin.cacheOperation?.getFileMetadata(filepath);
@@ -1543,6 +1575,8 @@ export class SyncMan {
 		const parentTask = await this.plugin.cacheOperation?.loadTaskFromCacheID(parentID);
 		if (parentTask && parentTask.items) { //we have some items.
 			if (itemId) {
+				log.debug('Updating Item: ', itemId);
+				log.debug('items: ', parentTask.items);
 				const oldItem = parentTask.items.find((item) => item.id == itemId);
 				if (oldItem) {
 					if (oldItem.title.trim() != newItem.description.trim() ||
@@ -1559,6 +1593,7 @@ export class SyncMan {
 						title: newItem?.description,
 						status: newItem?.status ? 2 : 0
 					});
+					modified = true;
 				}
 			} else {
 				const Oid = ObjectID();
