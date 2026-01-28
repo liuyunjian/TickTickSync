@@ -1,17 +1,30 @@
 import { Platform } from 'obsidian';
-import { settings } from '@/settings';
+import type { DeviceInfo } from '@/settings';
 
-export type DeviceInfo = {
-	deviceId: string;
-	deviceLabel?: string;
-};
+let currentDeviceInfo: DeviceInfo | null = null;
 
 export function generateDeviceId(): string {
 	return crypto.randomUUID();
 }
 
+/**
+ * Get current device info from memory (loaded from DB)
+ */
+export function getCurrentDeviceInfo(): DeviceInfo | null {
+	return currentDeviceInfo;
+}
+
+/**
+ * Set current device info in memory (should be called when loading from DB)
+ */
+export function setCurrentDeviceInfo(info: DeviceInfo): void {
+	currentDeviceInfo = info;
+}
+
 export async function detectDeviceLabel(): Promise<string> {
-	if (settings.deviceLabel && settings.deviceLabel.length > 0) return settings.deviceLabel;
+	if (currentDeviceInfo?.deviceLabel && currentDeviceInfo.deviceLabel.length > 0) {
+		return currentDeviceInfo.deviceLabel;
+	}
 
 	if (Platform.isDesktopApp) {
 		return (

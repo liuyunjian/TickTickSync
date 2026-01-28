@@ -43,7 +43,6 @@ import { initDB } from '@/db/dexie';
 //tasks
 import type { ITask } from '@/api/types/Task';
 import { getTasksByLabel, upsertLocalTask } from '@/db/tasks';
-import { detectDeviceLabel, generateDeviceId } from '@/db/device';
 
 //NEW: Repository layer
 import { TaskRepository } from '@/repositories/TaskRepository';
@@ -192,17 +191,8 @@ export default class TickTickSync extends Plugin {
 		this.taskDeletionHandler = new TaskDeletionHandler(this.app, this);
 		this.taskOperationsService = new TaskOperationsService(this.app, this);
 
-		let devID = getSettings().deviceId;
-		let devLabel = getSettings().deviceLabel;
-		const devLabeLen = devLabel?.length;
-		log.debug("initializePlugin", `Device ID: ${devID}, Device Label: ${devLabel}`);
-		if (!getSettings().deviceId || getSettings().deviceId.length === 0 ) {
-			devID = getSettings().deviceId = generateDeviceId();
-		}
-		if (!getSettings()?.deviceLabel || getSettings()?.deviceLabel.length === 0) {
-			devLabel = getSettings().deviceLabel = await detectDeviceLabel();
-		}
-		log.debug("initializePlugin, now: ", `Device ID: ${devID}, Device Label: ${devLabel}`);
+		// Device ID and Label are now managed in the DB and loaded into memory during initDB
+		// They are no longer stored in settings to prevent sync conflicts
 		const isProjectsSaved = await this.saveProjectsToCache();
 		if (!isProjectsSaved) {// invalid token or offline?
 			this.tickTickRestAPI = undefined;

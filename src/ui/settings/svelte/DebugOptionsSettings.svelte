@@ -5,6 +5,7 @@
 	import { onMount } from 'svelte';
 	import { LOG_LEVEL } from '@/ui/settings/svelte/constants.svelte.js';
 	import './SettingsStyles.css';
+	import { getCurrentDeviceInfo } from '@/db/device';
 
 	export let plugin: TickTickSync;
 
@@ -26,6 +27,7 @@
 
 	async function generateDebugInfoSubset() {
 		const settings = getSettings();
+		const currentDevice = getCurrentDeviceInfo();
 		const fileMetaData = await plugin.cacheOperation.getFileMetadatas();
 		const fmdData = [];
 		for (const file in fileMetaData) {
@@ -47,6 +49,10 @@
 				skipBackup: settings.skipBackup,
 				numProjects: (await plugin.service.getProjects()).length,
 				fileTasks: fmdData
+			},
+			device: {
+				current: currentDevice,
+				knownDevices: settings.devices
 			},
 			defaults:
 				{

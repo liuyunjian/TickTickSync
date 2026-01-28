@@ -135,6 +135,9 @@ export class TaskModificationDetector {
 			return false;
 		}
 
+		// Ensure file is registered in metadata before scanning
+		await this.plugin.cacheOperation?.getFileMetadata(file_path);
+
 		const fileMap = new FileMap(this.app, this.plugin, file);
 		await fileMap.init();
 

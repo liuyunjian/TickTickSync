@@ -108,12 +108,19 @@ export class TaskDeletionHandler {
 			const actuallyDeleted: string[] = [];
 
 			for (const taskId of missingTaskIds) {
-				const location = await this.fileTaskQueries.getFilepathForTask(taskId);
-				if (!location || location === filePath) {
-					// Task not found elsewhere or still mapped to this file - it's deleted
-					actuallyDeleted.push(taskId);
+				// First check if task exists in another file in the vault
+				const foundInAnotherFile = await this.findTaskInVault(taskId, filePath);
+
+				if (foundInAnotherFile) {
+					log.debug(`Task ${taskId} moved from ${filePath} to ${foundInAnotherFile}`);
+					// Update the database mapping to reflect the new location
+					const task = await this.plugin.cacheOperation?.loadTaskFromCacheID(taskId);
+					if (task) {
+						await this.plugin.cacheOperation?.updateTaskToCache(task, foundInAnotherFile, Date.now());
+					}
 				} else {
-					log.debug('Task found in different file:', taskId, location);
+					// Task not found anywhere in vault - it's actually deleted
+					actuallyDeleted.push(taskId);
 				}
 			}
 
@@ -121,6 +128,33 @@ export class TaskDeletionHandler {
 		}
 
 		return missingTaskIds;
+	}
+
+	/**
+	 * Search for a task ID in all vault files (except the specified excluded file)
+	 * Returns the file path if found, undefined otherwise
+	 */
+	private async findTaskInVault(taskId: string, excludeFilePath: string): Promise<string | undefined> {
+		const allMarkdownFiles = this.app.vault.getMarkdownFiles();
+		const taskIdPattern = new RegExp(`%%\\[ticktick_id::\\s*${taskId}\\]%%`, 'i');
+
+		for (const file of allMarkdownFiles) {
+			// Skip the file we're checking deletions from
+			if (file.path === excludeFilePath) {
+				continue;
+			}
+
+			try {
+				const content = await this.app.vault.cachedRead(file);
+				if (taskIdPattern.test(content)) {
+					return file.path;
+				}
+			} catch (error) {
+				log.warn(`Error reading file ${file.path} while searching for task ${taskId}:`, error);
+			}
+		}
+
+		return undefined;
 	}
 
 	/**

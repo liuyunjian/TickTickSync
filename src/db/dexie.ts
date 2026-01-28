@@ -6,8 +6,32 @@ import { defaultDBData } from "./schema";
 import { ensureSyncMeta } from "./meta";
 import { migrateDB } from "./migrations";
 import { getSettings, updateSettings } from '@/settings';
+import { setCurrentDeviceInfo } from './device';
+import type { DeviceInfo } from '@/settings';
 
 type MetaRow = SyncMeta & { key: "sync" };
+
+/**
+ * Track a device in the settings devices array if not already present
+ */
+function trackDeviceInSettings(deviceId: string, deviceLabel: string): void {
+	const settings = getSettings();
+	const existing = settings.devices.find(d => d.deviceId === deviceId);
+
+	if (!existing) {
+		// Add new device
+		updateSettings({
+			devices: [...settings.devices, { deviceId, deviceLabel }]
+		});
+	} else if (existing.deviceLabel !== deviceLabel) {
+		// Update device label if changed
+		updateSettings({
+			devices: settings.devices.map(d =>
+				d.deviceId === deviceId ? { deviceId, deviceLabel } : d
+			)
+		});
+	}
+}
 
 class TickTickDB extends Dexie {
 	tasks!: Table<LocalTask, string>;
@@ -42,19 +66,18 @@ export async function initDB() {
 	const settings = getSettings();
 
 	if (!rawMeta) {
-		const meta = await ensureSyncMeta(structuredClone(defaultDBData.meta), {
-			deviceId: settings.deviceId,
-			deviceLabel: settings.deviceLabel
-		});
+		// No DB meta exists, create new one
+		const meta = await ensureSyncMeta(structuredClone(defaultDBData.meta));
 		await db.meta.put({ ...meta, key: "sync" });
-		
-		// Update settings if they were empty
-		if (!settings.deviceId) {
-			updateSettings({
-				deviceId: meta.deviceId,
-				deviceLabel: meta.deviceLabel
-			});
-		}
+
+		// Set current device info in memory
+		setCurrentDeviceInfo({
+			deviceId: meta.deviceId,
+			deviceLabel: meta.deviceLabel || ''
+		});
+
+		// Track this device in settings
+		trackDeviceInSettings(meta.deviceId, meta.deviceLabel || '');
 		
 		// Initial migration from old settings-based tasks
 		const oldTasks = (settings as any).TickTickTasksData?.tasks;
@@ -122,13 +145,14 @@ export async function initDB() {
 		}
 	}
 
-	// Sync settings with DB meta (DB is source of truth for device identity)
-	if (settings.deviceId !== rawMeta.deviceId) {
-		updateSettings({
-			deviceId: rawMeta.deviceId,
-			deviceLabel: rawMeta.deviceLabel
-		});
-	}
+	// Load device info from DB into memory (DB is source of truth)
+	setCurrentDeviceInfo({
+		deviceId: rawMeta.deviceId,
+		deviceLabel: rawMeta.deviceLabel || ''
+	});
+
+	// Track this device in settings if not already tracked
+	trackDeviceInSettings(rawMeta.deviceId, rawMeta.deviceLabel || '');
 
 	const migrated = migrateDB({
 		meta: rawMeta,

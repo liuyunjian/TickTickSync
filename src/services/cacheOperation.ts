@@ -9,6 +9,7 @@ import log from '@/utils/logger';
 import { FileMap } from '@/services/fileMap';
 import { db } from "@/db/dexie";
 import { upsertLocalTask } from "@/db/tasks";
+import { getCurrentDeviceInfo } from "@/db/device";
 import { getAllProjects, getProjectById } from "@/db/projects";
 import { getAllFiles, getFile, upsertFile, deleteFile, updateFilePath as updateDbFilePath } from "@/db/files";
 import type { DeletionItem } from '@/modals/TaskDeletionModal';
@@ -466,7 +467,7 @@ export class CacheOperation {
 			if (lt) {
 				lt.task.status = 0;
 				lt.updatedAt = Date.now();
-				lt.lastModifiedByDeviceId = getSettings().deviceId;
+				lt.lastModifiedByDeviceId = getCurrentDeviceInfo()?.deviceId || "unknown";
 				await db.tasks.put(lt);
 				return lt.task.projectId;
 			}
@@ -522,7 +523,7 @@ export class CacheOperation {
 			if (lt) {
 				lt.task.status = 2;
 				lt.updatedAt = Date.now();
-				lt.lastModifiedByDeviceId = getSettings().deviceId;
+				lt.lastModifiedByDeviceId = getCurrentDeviceInfo()?.deviceId || "unknown";
 				await db.tasks.put(lt);
 				return lt.task.projectId;
 			}

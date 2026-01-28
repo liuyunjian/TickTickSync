@@ -4,15 +4,19 @@ import type { IProjectGroup } from '@/api/types/ProjectGroup';
 import type { FileMetadata } from '@/services/cacheOperation';
 import { settingsStore } from '@/ui/settings/settingsstore';
 
+export interface DeviceInfo {
+	deviceId: string;
+	deviceLabel: string;
+}
+
 export interface ITickTickSyncSettings {
 
 	baseURL: string;
 	token?: string;
 	version?: string;
 
-	deviceId: string;
-	deviceLabel: string;
-
+	// Track all known devices (synced across devices)
+	devices: DeviceInfo[];
 
 	automaticSynchronizationInterval: number;
 	enableFullVaultSync: boolean;
@@ -63,8 +67,7 @@ export const DEFAULT_SETTINGS: ITickTickSyncSettings = {
 	taskLinksInObsidian: 'taskLink',
 	bkupFolder: '/',
 
-	deviceId: '',
-	deviceLabel: '',
+	devices: [],
 
 	inboxID: '',
 	inboxName: 'Inbox',

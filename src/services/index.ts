@@ -114,6 +114,8 @@ export class TickTickService {
 			await doWithLock(LOCK_TASKS, async () => {
 				if (this.plugin.tickTickRestAPI) {
 					await this.saveProjectsToCache();
+					// Ensure all vault files are registered in Files metadata
+					await this.ensureVaultFilesRegistered();
 					await syncTickTickWithDexie(this.plugin.tickTickRestAPI, fullSync);
 					//NEW: Use VaultSyncCoordinator
 					await this.plugin.vaultSyncCoordinator.syncVaultWithDatabase();
@@ -125,6 +127,28 @@ export class TickTickService {
 		} finally {
 			// NEW: Clear TaskCache
 			this.plugin.taskCache.clear();
+		}
+	}
+
+	async ensureVaultFilesRegistered(): Promise<void> {
+		const vault = this.plugin.app.vault;
+		const markdownFiles = vault.getMarkdownFiles();
+		const allProjects = await this.getProjects();
+
+		for (const file of markdownFiles) {
+			const dbFile = await getFile(file.path);
+			if (!dbFile) {
+				// Look up file name in projects cache to auto-associate
+				const fileName = file.basename;
+				const matchingProject = allProjects.find(p => p.name === fileName);
+				if (matchingProject) {
+					log.debug(`Auto-associating file with project: ${file.path} -> ${matchingProject.name}`);
+					await upsertFile(file.path, matchingProject.id);
+				} else {
+					log.debug(`Registering file without project association: ${file.path}`);
+					await upsertFile(file.path);
+				}
+			}
 		}
 	}
 

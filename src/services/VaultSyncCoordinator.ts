@@ -110,18 +110,37 @@ export class VaultSyncCoordinator {
 
 	/**
 	 * Determine the target file for a task based on its project
+	 *
+	 * Priority:
+	 * 1. If task has default project ID, check if it exists in any unassociated vault files
+	 *    (handles multi-device sync where files arrive before DB is updated)
+	 * 2. File associated with the task's specific project
+	 * 3. File associated with the default project
 	 */
 	private async determineTargetFile(
 		task: ITask,
 		cache: Map<string, string>
 	): Promise<string | undefined> {
+		const defaultProjectId = getSettings().defaultProjectId;
+
+		// Special handling for tasks with default project ID:
+		// Check if this task exists in a vault file that isn't yet in the DB
+		// This handles the case where files sync via external mechanism before DB updates
+		if (task.projectId === defaultProjectId) {
+			const fileWithTask = await this.findTaskInUnassociatedFiles(task.id);
+			if (fileWithTask) {
+				log.debug(`Found task ${task.id} in unassociated file: ${fileWithTask}`);
+				return fileWithTask;
+			}
+		}
+
 		if (cache.has(task.projectId)) {
 			return cache.get(task.projectId)!;
 		}
 
 		let targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(task.projectId);
 		if (!targetFile) {
-			targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(getSettings().defaultProjectId);
+			targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(defaultProjectId);
 		}
 
 		if (targetFile) {
@@ -129,6 +148,33 @@ export class VaultSyncCoordinator {
 		}
 
 		return targetFile;
+	}
+
+	/**
+	 * Search for a task in vault files that don't have a project association
+	 * This handles multi-device sync scenarios where files arrive before DB is updated
+	 */
+	private async findTaskInUnassociatedFiles(taskId: string): Promise<string | undefined> {
+		const allFiles = await db.files.toArray();
+		const unassociatedFiles = allFiles.filter(f => !f.defaultProjectId);
+
+		for (const fileRecord of unassociatedFiles) {
+			const file = this.app.vault.getAbstractFileByPath(fileRecord.path);
+			if (file instanceof TFile) {
+				try {
+					const content = await this.app.vault.cachedRead(file);
+					// Check if this file contains the task ID in TickTick metadata format
+					const pattern = new RegExp(`%%\\[ticktick_id::\\s*${taskId}\\]%%`, 'i');
+					if (pattern.test(content)) {
+						return fileRecord.path;
+					}
+				} catch (error) {
+					log.warn(`Error reading file ${fileRecord.path}:`, error);
+				}
+			}
+		}
+
+		return undefined;
 	}
 
 	/**

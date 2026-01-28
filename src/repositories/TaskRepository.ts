@@ -7,7 +7,7 @@ import { db } from "@/db/dexie";
 import type { ITask } from "@/api/types/Task";
 import type { LocalTask } from "@/db/schema";
 import log from "@/utils/logger";
-import { getSettings } from "@/settings";
+import { getCurrentDeviceInfo } from "@/db/device";
 
 export class TaskRepository {
 	/**
@@ -99,7 +99,7 @@ export class TaskRepository {
 		try {
 			const existingTask = await db.tasks.where("taskId").equals(task.id).first();
 			const now = timestamp || Date.now();
-			const deviceId = getSettings().deviceId;
+			const deviceId = getCurrentDeviceInfo()?.deviceId || "unknown";
 
 			if (existingTask) {
 				// Update existing
@@ -140,7 +140,7 @@ export class TaskRepository {
 				await db.tasks.update(localTask.localId, {
 					deleted: true,
 					updatedAt: Date.now(),
-					lastModifiedByDeviceId: getSettings().deviceId
+					lastModifiedByDeviceId: getCurrentDeviceInfo()?.deviceId || "unknown"
 				});
 			}
 		} catch (error) {
@@ -160,7 +160,7 @@ export class TaskRepository {
 				changes: {
 					deleted: true,
 					updatedAt: Date.now(),
-					lastModifiedByDeviceId: getSettings().deviceId
+					lastModifiedByDeviceId: getCurrentDeviceInfo()?.deviceId || "unknown"
 				}
 			}));
 

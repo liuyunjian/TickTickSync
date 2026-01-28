@@ -130,9 +130,21 @@ export class EventHandlerService {
 	}
 
 	/**
-	 * Register file events (delete, rename, modify)
+	 * Register file events (create, delete, rename, modify)
 	 */
 	private registerFileEvents(): void {
+		// Create event - ensure new files are registered in metadata
+		this.plugin.registerEvent(
+			this.app.vault.on('create', async (file) => {
+				if (file instanceof TFolder || !getSettings().token) {
+					return;
+				}
+
+				// Register the file in metadata so it can be scanned for tasks
+				await this.plugin.cacheOperation?.getFileMetadata(file.path);
+			})
+		);
+
 		// Delete event
 		this.plugin.registerEvent(
 			this.app.vault.on('delete', async (file) => {

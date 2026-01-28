@@ -2,22 +2,89 @@
 	import CollapsibleSection from '@/ui/settings/svelte/sections/CollapsibleSection.svelte';
 	import { createEventDispatcher } from 'svelte';
 	import { getSettings, updateSettings } from '../../../../settings';
+	import { getCurrentDeviceInfo, setCurrentDeviceInfo } from '@/db/device';
+	import { db } from '@/db/dexie';
+	import log from 'loglevel';
 
 	export let plugin;
 	export let open = false;
 
 	const dispatch = createEventDispatcher();
 
-	let deviceLabel = getSettings().deviceLabel;
-	let deviceId = getSettings().deviceId;
+	// Current device (from DB, not synced)
+	let currentDevice = getCurrentDeviceInfo();
+
+	// All known devices (from settings, synced across devices)
+	let devices = getSettings().devices;
+	log.debug('devices', devices);
+
+	// Editing state for current device label
+	let isEditingLabel = false;
+	let editedLabel = currentDevice?.deviceLabel || '';
+	let currentDeviceLabel = currentDevice?.deviceLabel || 'Unknown';
 
 	function handleHeaderClick() {
 		dispatch('toggle');
 	}
 
-	function handleLabelChange(e) {
-		const value = e.target.value;
-		updateSettings({ deviceLabel: value });
+	function startEditingLabel() {
+		isEditingLabel = true;
+		editedLabel = currentDevice?.deviceLabel || '';
+	}
+
+	function cancelEditingLabel() {
+		isEditingLabel = false;
+		editedLabel = currentDevice?.deviceLabel || '';
+	}
+
+	async function saveDeviceLabel() {
+		if (!currentDevice || editedLabel.trim() === '') {
+			return;
+		}
+
+		const trimmedLabel = editedLabel.trim();
+
+		// Update in DB
+		const meta = await db.meta.get('sync');
+		if (meta) {
+			meta.deviceLabel = trimmedLabel;
+			await db.meta.put(meta);
+		}
+
+		// Update in memory
+		setCurrentDeviceInfo({
+			deviceId: currentDevice.deviceId,
+			deviceLabel: trimmedLabel
+		});
+
+		// Update local reactive variables
+		currentDevice = { ...currentDevice, deviceLabel: trimmedLabel };
+		currentDeviceLabel = trimmedLabel;
+
+		// Update in settings
+		const settings = getSettings();
+		const updatedDevices = settings.devices.map(d =>
+			d.deviceId === currentDevice.deviceId
+				? { deviceId: d.deviceId, deviceLabel: trimmedLabel }
+				: d
+		);
+		updateSettings({ devices: updatedDevices });
+
+		// Update local devices list
+		devices = updatedDevices;
+
+		// Exit editing mode
+		isEditingLabel = false;
+
+		await plugin.saveSettings();
+	}
+
+	function handleKeydown(event: KeyboardEvent) {
+		if (event.key === 'Enter') {
+			saveDeviceLabel();
+		} else if (event.key === 'Escape') {
+			cancelEditingLabel();
+		}
 	}
 </script>
 
@@ -30,36 +97,84 @@
 
 	<div class="setting-item">
 		<div class="setting-item-info">
-			<div class="setting-item-name">Device Name</div>
+			<div class="setting-item-name">Current Device</div>
 			<div class="setting-item-description">
-				A friendly name for this device used in sync logs and metadata.
+				This device's identity
 			</div>
 		</div>
 		<div class="setting-item-control">
-			<input
-				type="text"
-				placeholder="e.g. Work Laptop"
-				bind:value={deviceLabel}
-				on:input={handleLabelChange}
-			/>
+			<div style="display: flex; flex-direction: column; gap: 0.5em;">
+				<div style="display: flex; align-items: center; gap: 0.5em;">
+					<strong>Label:</strong>
+					{#if isEditingLabel}
+						<input
+							type="text"
+							bind:value={editedLabel}
+							on:keydown={handleKeydown}
+							style="flex: 1; padding: 0.25em 0.5em;"
+							autofocus
+						/>
+						<button
+							class="mod-cta"
+							on:click={saveDeviceLabel}
+							style="padding: 0.25em 0.5em;"
+						>
+							Save
+						</button>
+						<button
+							on:click={cancelEditingLabel}
+							style="padding: 0.25em 0.5em;"
+						>
+							Cancel
+						</button>
+					{:else}
+						<span>{currentDevice?.deviceLabel || 'Unknown'}</span>
+						<button
+							on:click={startEditingLabel}
+							class="clickable-icon"
+							style="padding: 0.25em 0.5em;"
+							aria-label="Edit device label"
+						>
+							<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+						</button>
+					{/if}
+				</div>
+				<div style="font-family: monospace; font-size: 0.9em; color: var(--text-muted);">
+					<strong>ID:</strong> {currentDevice?.deviceId || 'Unknown'}
+				</div>
+			</div>
 		</div>
 	</div>
 
 	<div class="setting-item">
 		<div class="setting-item-info">
-			<div class="setting-item-name">Device ID</div>
+			<div class="setting-item-name">Known Devices</div>
 			<div class="setting-item-description">
-				Unique identifier for this installation.
+				All devices that have been used with this vault.
 			</div>
 		</div>
 		<div class="setting-item-control">
-			<input
-				type="text"
-				value={deviceId}
-				readonly
-				class="setting-disabled"
-				style="cursor: default;"
-			/>
+			{#if devices.length === 0}
+				<div style="color: var(--text-muted); font-style: italic;">
+					No devices tracked yet
+				</div>
+			{:else}
+				<div style="display: flex; flex-direction: column; gap: 0.5em;">
+					{#each devices as device}
+						<div style="padding: 0.5em; background: var(--background-secondary); border-radius: 4px;">
+							<div>
+								<strong>{device.deviceLabel}</strong>
+								{#if currentDevice && device.deviceId === currentDevice.deviceId}
+									<span style="color: var(--text-accent); font-size: 0.9em;">(current)</span>
+								{/if}
+							</div>
+							<div style="font-family: monospace; font-size: 0.85em; color: var(--text-muted);">
+								{device.deviceId}
+							</div>
+						</div>
+					{/each}
+				</div>
+			{/if}
 		</div>
 	</div>
 </CollapsibleSection>

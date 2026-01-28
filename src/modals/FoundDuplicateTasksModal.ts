@@ -13,6 +13,9 @@ export interface DuplicateSelection {
 export class FoundDuplicateTasksModal extends Modal {
     private resolvePromise: (value: boolean) => void;
     private selections: DuplicateSelection[] = [];
+    private sortColumn: 'title' | 'file' | null = null;
+    private sortDirection: 'asc' | 'desc' = 'asc';
+    private tableBody: HTMLTableSectionElement;
 
     constructor(
         app: App,
@@ -22,12 +25,12 @@ export class FoundDuplicateTasksModal extends Modal {
     ) {
         super(app);
         this.titleEl.setText('Duplicate Tasks Found');
-        
+
         // Initialize selections: for each taskId, we have the original file and the duplicate files
         for (const taskId in duplicates) {
             const originalFile = taskIds[taskId];
             const duplicateFiles = duplicates[taskId];
-            
+
             this.selections.push({ taskId, filePath: originalFile, selected: false });
             duplicateFiles.forEach(file => {
                 this.selections.push({ taskId, filePath: file, selected: false });
@@ -60,26 +63,21 @@ export class FoundDuplicateTasksModal extends Modal {
         const thead = table.createEl('thead');
         const headerRow = thead.createEl('tr');
         headerRow.createEl('th', { text: 'Remove?' });
-        headerRow.createEl('th', { text: 'Task Title' });
-        headerRow.createEl('th', { text: 'File Path' });
 
-        const tbody = table.createEl('tbody');
+        const titleHeader = headerRow.createEl('th', { cls: 'sortable-header' });
+        titleHeader.style.cursor = 'pointer';
+        titleHeader.style.userSelect = 'none';
+        titleHeader.setText('Task Title ⇅');
+        titleHeader.addEventListener('click', () => this.sortBy('title', titleHeader));
 
-        this.selections.forEach((item) => {
-            const row = tbody.createEl('tr');
-            
-            const checkCell = row.createEl('td', { cls: 'project-table-border' });
-            const checkbox = checkCell.createEl('input', { type: 'checkbox' });
-            checkbox.checked = item.selected;
-            checkbox.addEventListener('change', () => {
-                item.selected = checkbox.checked;
-            });
+        const fileHeader = headerRow.createEl('th', { cls: 'sortable-header' });
+        fileHeader.style.cursor = 'pointer';
+        fileHeader.style.userSelect = 'none';
+        fileHeader.setText('File Path ⇅');
+        fileHeader.addEventListener('click', () => this.sortBy('file', fileHeader));
 
-            const title = item.taskTitle || item.taskId;
-            const displayTitle = title.length > 20 ? title.substring(0, 20) + '...' : title;
-            row.createEl('td', { cls: 'project-table-border', text: displayTitle });
-            row.createEl('td', { cls: 'project-table-border', text: item.filePath });
-        });
+        this.tableBody = table.createEl('tbody');
+        this.renderTableRows();
 
         new Setting(contentEl)
             .addButton(btn => btn
@@ -96,6 +94,58 @@ export class FoundDuplicateTasksModal extends Modal {
                     this.close();
                     this.resolvePromise(true);
                 }));
+    }
+
+    private renderTableRows() {
+        this.tableBody.empty();
+
+        this.selections.forEach((item) => {
+            const row = this.tableBody.createEl('tr');
+
+            const checkCell = row.createEl('td', { cls: 'project-table-border' });
+            const checkbox = checkCell.createEl('input', { type: 'checkbox' });
+            checkbox.checked = item.selected;
+            checkbox.addEventListener('change', () => {
+                item.selected = checkbox.checked;
+            });
+
+            const title = item.taskTitle || item.taskId;
+            const displayTitle = title.length > 20 ? title.substring(0, 20) + '...' : title;
+            row.createEl('td', { cls: 'project-table-border', text: displayTitle });
+            row.createEl('td', { cls: 'project-table-border', text: item.filePath });
+        });
+    }
+
+    private sortBy(column: 'title' | 'file', headerEl: HTMLTableCellElement) {
+        if (this.sortColumn === column) {
+            this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc';
+        } else {
+            this.sortColumn = column;
+            this.sortDirection = 'asc';
+        }
+
+        this.selections.sort((a, b) => {
+            let compareA: string;
+            let compareB: string;
+
+            if (column === 'title') {
+                compareA = (a.taskTitle || a.taskId).toLowerCase();
+                compareB = (b.taskTitle || b.taskId).toLowerCase();
+            } else {
+                compareA = a.filePath.toLowerCase();
+                compareB = b.filePath.toLowerCase();
+            }
+
+            const comparison = compareA.localeCompare(compareB);
+            return this.sortDirection === 'asc' ? comparison : -comparison;
+        });
+
+        // Update header text with sort indicator
+        const arrow = this.sortDirection === 'asc' ? '↑' : '↓';
+        const label = column === 'title' ? 'Task Title' : 'File Path';
+        headerEl.setText(`${label} ${arrow}`);
+
+        this.renderTableRows();
     }
 
     private async performDeletions() {
