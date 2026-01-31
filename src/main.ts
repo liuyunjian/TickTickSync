@@ -48,6 +48,7 @@ import { getTasksByLabel, upsertLocalTask } from '@/db/tasks';
 import { TaskRepository } from '@/repositories/TaskRepository';
 import { FileTaskQueries } from '@/repositories/FileTaskQueries';
 import { TaskCache } from '@/repositories/TaskCache';
+import { ProjectGroupRepository } from '@/repositories/ProjectGroupRepository';
 
 //NEW: Service layer
 import { EventHandlerService } from '@/services/EventHandlerService';
@@ -55,6 +56,8 @@ import { VaultSyncCoordinator } from '@/services/VaultSyncCoordinator';
 import { TaskModificationDetector } from '@/services/TaskModificationDetector';
 import { TaskDeletionHandler } from '@/services/TaskDeletionHandler';
 import { TaskOperationsService } from '@/services/TaskOperationsService';
+import { FolderSyncService } from '@/services/FolderSyncService';
+import { FolderMigrationService } from '@/services/FolderMigrationService';
 
 export default class TickTickSync extends Plugin {
 
@@ -70,6 +73,7 @@ export default class TickTickSync extends Plugin {
 	taskRepository!: TaskRepository;
 	fileTaskQueries!: FileTaskQueries;
 	taskCache!: TaskCache;
+	projectGroupRepository!: ProjectGroupRepository;
 
 	//NEW: Service layer
 	eventHandlerService!: EventHandlerService;
@@ -77,6 +81,8 @@ export default class TickTickSync extends Plugin {
 	taskModificationDetector!: TaskModificationDetector;
 	taskDeletionHandler!: TaskDeletionHandler;
 	taskOperationsService!: TaskOperationsService;
+	folderSyncService!: FolderSyncService;
+	folderMigrationService!: FolderMigrationService;
 
 	tickTickRestAPI?: TickTickRestAPI;
 	statusBar?: HTMLElement;
@@ -184,10 +190,13 @@ export default class TickTickSync extends Plugin {
 		this.taskRepository = new TaskRepository();
 		this.fileTaskQueries = new FileTaskQueries();
 		this.taskCache = new TaskCache();
+		this.projectGroupRepository = new ProjectGroupRepository();
 
 		//NEW: Initialize services
-		this.vaultSyncCoordinator = new VaultSyncCoordinator(this.app, this);
-		this.taskModificationDetector = new TaskModificationDetector(this.app, this);
+		this.folderSyncService = new FolderSyncService(this.app, this.projectGroupRepository);
+		this.folderMigrationService = new FolderMigrationService(this.app, this.folderSyncService);
+		this.vaultSyncCoordinator = new VaultSyncCoordinator(this.app, this, this.folderSyncService);
+		this.taskModificationDetector = new TaskModificationDetector(this.app, this, this.folderSyncService);
 		this.taskDeletionHandler = new TaskDeletionHandler(this.app, this);
 		this.taskOperationsService = new TaskOperationsService(this.app, this);
 
@@ -516,6 +525,7 @@ export default class TickTickSync extends Plugin {
 
 			const vaultId = this.app.vault.getName();
 			log.debug(`Vault ID: ${vaultId}`);
+			this.dumpDB();
 
 
 
@@ -562,6 +572,16 @@ export default class TickTickSync extends Plugin {
 		//NEW: Use EventHandlerService to manage all event registration
 		this.eventHandlerService = new EventHandlerService(this.app, this);
 		this.eventHandlerService.registerAll();
+	}
+
+	/**
+	 * Public entrypoint for Settings UI: reorganize existing task files into TickTick folder structure.
+	 */
+	async reorganizeFilesToFolders(): Promise<number> {
+		if (!this.folderMigrationService) {
+			throw new Error('FolderMigrationService is not initialized');
+		}
+		return await this.folderMigrationService.reorganizeFilesToFolders();
 	}
 
 	private async migrateData(data: any) {
@@ -630,6 +650,45 @@ export default class TickTickSync extends Plugin {
 			this.ret = result;
 		});
 		return await myModal.showModal();
+
+	}
+	private dumpDB() {
+		let dbName = 'test-vault-syncthingTickTickSync';
+		const request = indexedDB.open(dbName);
+
+		request.onsuccess = async (event) => {
+			const db = event.target.result;
+			const storeNames = Array.from(db.objectStoreNames);
+			const exportData = {};
+
+			// Process all stores
+			for (const storeName of storeNames) {
+				exportData[storeName] = await new Promise((resolve) => {
+					const transaction = db.transaction([storeName], "readonly");
+					const store = transaction.objectStore(storeName);
+					const allItems = store.getAll();
+
+					allItems.onsuccess = () => resolve(allItems.result);
+					allItems.onerror = () => resolve([]); // Handle empty/error stores
+				});
+			}
+
+			// Create and download JSON file
+			const jsonString = JSON.stringify(exportData, null, 2);
+			const blob = new Blob([jsonString], { type: "application/json" });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+
+			a.href = url;
+			a.download = `${dbName}_full_dump.json`;
+			a.click();
+
+			URL.revokeObjectURL(url);
+			console.log(`Exported ${storeNames.length} stores to ${dbName}_full_dump.json`);
+			db.close();
+		};
+
+		request.onerror = (e) => console.error("Database failed to open:", e.target.error);
 
 	}
 

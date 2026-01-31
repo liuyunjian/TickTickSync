@@ -249,37 +249,59 @@ export class CacheOperation {
 
 
 	async getFilepathForProjectId(projectId: string) {
-		if ((projectId) ||  (projectId !== '')) {
+		if ((projectId) || (projectId !== '')) {
 			const files = await getAllFiles();
 
-			//If this project is set as a default for a file, return that file.
+			// If this project is set as a default for a file, return that file.
 			for (const file of files) {
 				if (file.defaultProjectId === projectId) {
 					return file.path;
 				}
 			}
 
-			//If the project is the inbox, return the inbox or default project file. (It may not have been created)
+			// If the project is the inbox, return the inbox or default project file. (It may not have been created)
 			if ((projectId === getSettings().inboxID) ||
-				(projectId === getSettings().defaultProjectId)) { //highly unlikely, but just in case
-				//They don't have a file for the Inbox. If they have a default project, return that.
+				(projectId === getSettings().defaultProjectId)) { // highly unlikely, but just in case
+				// They don't have a file for the Inbox. If they have a default project, return that.
 				if (getSettings().defaultProjectName) {
 					const folder = getDefaultFolder();
-					return (folder ? folder + "/" : "") + getSettings().defaultProjectName + ".md"
+					return (folder ? folder + "/" : "") + getSettings().defaultProjectName + ".md";
 				}
 			}
 
-			//otherwise, return the project name as a md file and hope for the best.
-			const filePath = await this.getProjectNameByIdFromCache(projectId/*, getSettings().keepProjectFolders*/);
-			if (filePath) {
-				const folder = getDefaultFolder();
-				return (folder ? folder + "/" : "") + filePath + FILE_EXT;
-			} else {
-				//Not a file that's in fileMetaData, not the inbox no default project set
-				const errmsg = `File path not found for ${projectId}, returning ${filePath} instead.`;
+			// Otherwise, compute expected path for this project.
+			const projectName = await this.getProjectNameByIdFromCache(projectId);
+			if (!projectName) {
+				const errmsg = `File path not found for ${projectId}, returning ${projectName} instead.`;
 				log.warn(errmsg);
 				throw new Error(errmsg);
 			}
+
+			const folder = getDefaultFolder();
+
+			// Folder organization: baseFolder/<groupName>/<projectName>.md
+			if (getSettings().keepProjectFolders) {
+				const project = await getProjectById(projectId);
+				const groupId = project?.groupId;
+
+				if (groupId) {
+					const group = await db.projectGroups.get(groupId);
+					const groupName = group?.group?.name;
+
+					if (groupName && groupName.trim().length > 0) {
+						const sanitize = (name: string): string =>
+							name.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+
+						const safeGroupName = sanitize(groupName);
+						const safeProjectName = sanitize(projectName);
+						const base = (folder ? folder + "/" : "");
+						return `${base}${safeGroupName}/${safeProjectName}${FILE_EXT}`;
+					}
+				}
+			}
+
+			// Flat structure: baseFolder/<projectName>.md
+			return (folder ? folder + "/" : "") + projectName + FILE_EXT;
 		} else {
 			const folder = getDefaultFolder();
 			if (getSettings().defaultProjectName) {
@@ -625,7 +647,7 @@ export class CacheOperation {
 
 			//Check for List renames.
 			for (const project of projects) {
-				await this.checkProjectRename(project.id, project.name)
+				await this.checkProjectRename(project.id, project.name, project)
 			}
 			
 			//save to Dexie
@@ -733,15 +755,46 @@ export class CacheOperation {
 	 * rename both the file on disk and the metadata key.
 	 * @param ttProjectId The current project's ID.
 	 * @param ttProjectName The current project's name.
+	 * @param ttProject The current project object (from TickTick API).
 	 */
-	async checkProjectRename(ttProjectId: string, ttProjectName: string): Promise<void> {
+	async checkProjectRename(ttProjectId: string, ttProjectName: string, ttProject?: IProject): Promise<void> {
 		const fileMetadata = await this.getFileMetadatas();
 		if (!fileMetadata) return;
 		const projects = await getAllProjects();
 		if (!projects || Object.keys(projects).length == 0) return;
 
 		const project = projects.find(p => p.id === ttProjectId);
-		if (!project) return; //it's a new project, move on.
+		if (!project) {
+			// It's a new project - create a file entry for it with defaultProjectId set
+			// Calculate the correct path based on keepProjectFolders setting
+			let newFilePath: string;
+			const folder = getDefaultFolder();
+			const sanitize = (name: string): string =>
+				name.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+			const safeProjectName = sanitize(ttProjectName);
+
+			if (getSettings().keepProjectFolders && ttProject?.groupId) {
+				// Get the group name for folder organization
+				const group = await db.projectGroups.get(ttProject.groupId);
+				const groupName = group?.group?.name;
+
+				if (groupName && groupName.trim().length > 0) {
+					const safeGroupName = sanitize(groupName);
+					const base = (folder ? folder + "/" : "");
+					newFilePath = `${base}${safeGroupName}/${safeProjectName}${FILE_EXT}`;
+				} else {
+					// No valid group name, use flat structure
+					newFilePath = (folder ? folder + "/" : "") + safeProjectName + FILE_EXT;
+				}
+			} else {
+				// Flat structure
+				newFilePath = (folder ? folder + "/" : "") + safeProjectName + FILE_EXT;
+			}
+
+			log.debug(`New project detected: ${ttProjectName} (${ttProjectId}). Creating file entry: ${newFilePath}`);
+			await upsertFile(newFilePath, ttProjectId);
+			return;
+		}
 		if (project?.name !== ttProjectName) {
 			log.debug(`Project Name Changed from ${project?.name} to ${ttProjectName}`)
 			const currentProjectPath = await this.getFilepathForProjectId(ttProjectId);

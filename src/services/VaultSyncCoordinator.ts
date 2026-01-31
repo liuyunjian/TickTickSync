@@ -10,15 +10,18 @@ import type { LocalTask } from '@/db/schema';
 import { db } from "@/db/dexie";
 import { getSettings } from '@/settings';
 import { TaskDeletionModal } from '@/modals/TaskDeletionModal';
+import { FolderSyncService } from '@/services/FolderSyncService';
 import log from '@/utils/logger';
 
 export class VaultSyncCoordinator {
 	private app: App;
 	private plugin: TickTickSync;
+	private folderSyncService?: FolderSyncService;
 
-	constructor(app: App, plugin: TickTickSync) {
+	constructor(app: App, plugin: TickTickSync, folderSyncService?: FolderSyncService) {
 		this.app = app;
 		this.plugin = plugin;
+		this.folderSyncService = folderSyncService;
 	}
 
 	/**
@@ -114,7 +117,7 @@ export class VaultSyncCoordinator {
 	 * Priority:
 	 * 1. If task has default project ID, check if it exists in any unassociated vault files
 	 *    (handles multi-device sync where files arrive before DB is updated)
-	 * 2. File associated with the task's specific project
+	 * 2. File associated with the task's specific project (with folder structure if enabled)
 	 * 3. File associated with the default project
 	 */
 	private async determineTargetFile(
@@ -138,9 +141,26 @@ export class VaultSyncCoordinator {
 			return cache.get(task.projectId)!;
 		}
 
-		let targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(task.projectId);
+		// Use FolderSyncService if available (handles folder structure)
+		let targetFile: string | undefined;
+		if (this.folderSyncService && getSettings().keepProjectFolders) {
+			const projectName = await this.plugin.cacheOperation.getProjectNameByIdFromCache(task.projectId);
+			if (projectName) {
+				targetFile = await this.folderSyncService.getFilePathForTask(task, projectName);
+				// Ensure the folder exists
+				const folderPath = await this.folderSyncService.getFolderPathForTask(task);
+				if (folderPath) {
+					await this.folderSyncService.ensureFolderExists(folderPath);
+				}
+			}
+		}
+
+		// Fallback to legacy behavior
 		if (!targetFile) {
-			targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(defaultProjectId);
+			targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(task.projectId);
+			if (!targetFile) {
+				targetFile = await this.plugin.cacheOperation.getFilepathForProjectId(defaultProjectId);
+			}
 		}
 
 		if (targetFile) {

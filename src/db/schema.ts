@@ -40,6 +40,7 @@ export type LocalProjectGroup = {
 export type LocalFile = {
 	path: string;
 	defaultProjectId?: string;
+	managedByPlugin?: boolean; // true = plugin manages location, false/undefined = user manages
 };
 
 export type TaskFileMapping = {

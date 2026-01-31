@@ -509,7 +509,6 @@ export class Tick {
 				childIds: jsonOptions.childIds ? jsonOptions.childIds : [],
 				parentId: jsonOptions.parentId ? jsonOptions.parentId : null
 			};
-			log.debug('Update Task: ', thisTask.title.substring(0, 15), thisTask.id, thisTask.projectId);
 
 			let updatePayload: any;
 			updatePayload = {

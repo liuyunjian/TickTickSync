@@ -18,6 +18,7 @@ import { db } from "@/db/dexie";
 import { getAllProjects } from "@/db/projects";
 import { loadTasksFromCache } from "@/db/tasks";
 import { getAllFiles, getFile, upsertFile } from "@/db/files";
+import type { IProject } from '@/api/types/Project';
 
 const LOCK_TASKS = 'LOCK_TASKS';
 
@@ -113,7 +114,33 @@ export class TickTickService {
 
 			await doWithLock(LOCK_TASKS, async () => {
 				if (this.plugin.tickTickRestAPI) {
-					await this.saveProjectsToCache();
+					const projects = await this.saveProjectsToCache();
+					if (projects) {
+						//check to see if we need to move any project files
+						const mostRecentModifiedTime = projects.reduce((latest, project) => {
+							return new Date(project.modifiedTime) > new Date(latest)
+								? project.modifiedTime
+								: latest;
+						}, projects[0].modifiedTime);
+						const mostRecentModifiedTimeDate = new Date(mostRecentModifiedTime);
+						log.debug(`Most recent modified time: ${mostRecentModifiedTime}`);
+						const meta = await db.meta.get("sync");
+						const lastFullSync = meta?.lastFullSync;
+						const lastDeltaSync = meta?.lastDeltaSync;
+						const lastSync = lastFullSync > lastDeltaSync ? lastFullSync : lastDeltaSync;
+						const lastSyncDate = lastSync ? new Date(lastSync) : null;
+						if (mostRecentModifiedTimeDate > lastSyncDate) {
+							log.debug(`TT Folder move detected. Moving all project files to new location.`)
+							await this.plugin.reorganizeFilesToFolders();
+
+						}
+
+
+
+
+
+					}
+
 					// Ensure all vault files are registered in Files metadata
 					await this.ensureVaultFilesRegistered();
 					await syncTickTickWithDexie(this.plugin.tickTickRestAPI, fullSync);
@@ -152,18 +179,20 @@ export class TickTickService {
 		}
 	}
 
-	async saveProjectsToCache(): Promise<boolean> {
-		const projects = await this.api?.getProjects();
-		if (!projects) {
-			return false;
+	async saveProjectsToCache(): Promise<IProject[] | undefined> {
+		let projects = await this.api?.getProjects();
+		if (projects) {
+			// Also get project groups
+			const groups = await this.api?.getProjectGroups();
+			if (groups) {
+				await db.projectGroups.clear();
+				await db.projectGroups.bulkPut(groups.map(g => ({ id: g.id, group: g })));
+			}
+			if (!await this.cacheOperation.saveProjectsToCache(projects)) {
+				projects = undefined;
+			}
 		}
-		// Also get project groups
-		const groups = await this.api?.getProjectGroups();
-		if (groups) {
-			await db.projectGroups.clear();
-			await db.projectGroups.bulkPut(groups.map(g => ({ id: g.id, group: g })));
-		}
-		return this.cacheOperation.saveProjectsToCache(projects);
+		return projects;
 	}
 
 	async getProjects() {
@@ -269,8 +298,16 @@ export class TickTickService {
 						log.debug(`Adding new DB entry for file: ${file.path}`);
 						await upsertFile(file.path);
 					}
+				} else {
+					const fileName = file.basename;
+					const matchingProject = allProjects.find(p => p.name === fileName);
+					if (matchingProject?.id != dbFile.defaultProjectId) {
+						log.debug(`Project mismatch  DB entry: ${file.path} -> ${matchingProject?.id} vs ${dbFile.defaultProjectId}`);
+						await upsertFile(file.path, matchingProject?.id);
+					}
 				}
 			}
+
 
 			// 2. Remove DB entries for files that no longer exist in vault, or update if renamed
 			for (const dbFile of dbFiles) {

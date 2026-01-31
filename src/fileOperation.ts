@@ -163,51 +163,39 @@ export class FileOperation {
 		}
 
 		try {
-			//TODO: Deal with Folders and sections in the fullness of time.
-			let folderPath = getDefaultFolder();
-			if (folderPath && folderPath !== '') {
-				let folder = this.app.vault.getAbstractFileByPath(folderPath);
-				if (!(folder instanceof TFolder)) {
-					log.warn(`Folder ${folderPath} does not exit. It will be created`);
-					folder = await this.app.vault.createFolder(folderPath);
+			// Ensure all parent folders exist (supports TickTick folder structure)
+			const parentPath = taskFile.includes('/') ? taskFile.substring(0, taskFile.lastIndexOf('/')) : '';
+			if (parentPath) {
+				const parts = parentPath.split('/').filter(Boolean);
+				let current = '';
+				for (const part of parts) {
+					current = current ? `${current}/${part}` : part;
+					const folder = this.app.vault.getAbstractFileByPath(current);
+					if (!folder) {
+						log.warn(`Folder ${current} does not exit. It will be created`);
+						await this.app.vault.createFolder(current);
+					} else if (!(folder instanceof TFolder)) {
+						throw new Error(`Path conflict: ${current} exists and is not a folder`);
+					}
 				}
 			}
-			//TODO: When we implement this, beware case sensitivity.!
 
-			// if (getSettings().keepProjectFolders && taskFile.includes('/')){
-			// 	const groupName = taskFile.substring(0, taskFile.indexOf('/'));
-			// 	const folderPath = (getDefaultFolder() === '/' ?
-			// 		'' :
-			// 		(getDefaultFolder() + '/'))
-			// 		+ groupName
-			// 	const groupFolder = this.app.vault.getAbstractFileByPath(folderPath);
-			// 	if (!(groupFolder instanceof TFolder)) {
-			// log.warn(`Folder ${folderPath} does not exit. It will be created`);
-			// 		await this.app.vault.createFolder(folderPath);
-			// 	}
-			// }
 			new Notice(`Creating new file: ${taskFile}`);
 			log.warn(`Creating new file: ${taskFile}`);
 			const whoAdded = `${this.plugin.manifest.name} -- ${this.plugin.manifest.version}`;
 			try {
+				//TODO: Do the thing with saving the project id to the DB here.
 				file = await this.app.vault.create(taskFile, `== Added by ${whoAdded} == `);
 				if (projectId) {
-					// Only associate if this file is actually the one intended for this project
-					const expectedFilepath = await this.plugin.cacheOperation.getFilepathForProjectId(projectId);
-					if (expectedFilepath && expectedFilepath.replace(/^\//, '') === taskFile) {
-						await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
-					}
+					// Associate this file with the project in DB (used for folder management decisions)
+					await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
 				}
 			} catch (error) {
 				if (error.message.includes('File already exists')) {
 					log.info('Attempting to find existing file', taskFile);
 					file = this.app.vault.getAbstractFileByPath(taskFile);
 					if (projectId) {
-						// Only associate if this file is actually the one intended for this project
-						const expectedFilepath = await this.plugin.cacheOperation.getFilepathForProjectId(projectId);
-						if (expectedFilepath && expectedFilepath.replace(/^\//, '') === taskFile) {
-							await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
-						}
+						await this.plugin.cacheOperation.setDefaultProjectIdForFilepath(taskFile, projectId);
 					}
 					if (!file) {
 						const fileName = taskFile.split('/').pop();

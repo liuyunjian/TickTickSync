@@ -24,7 +24,7 @@
 		sync: 'Sync Control',
 		manual: 'Manual Operations',
 		debug: 'Debug Options',
-		tasks: 'Task Links',
+		tasks: 'Task Settings',
 		notes: 'Notes',
 	};
 </script>

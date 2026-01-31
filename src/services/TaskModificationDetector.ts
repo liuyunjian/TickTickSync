@@ -13,7 +13,9 @@ import { App, Editor, type EditorPosition, type MarkdownFileInfo, MarkdownView, 
 import type TickTickSync from '@/main';
 import type { ITask } from '@/api/types/Task';
 import { FileMap } from '@/services/fileMap';
+import { FolderSyncService } from '@/services/FolderSyncService';
 import { getSettings } from '@/settings';
+import { getProjectById } from '@/db/projects';
 import log from '@/utils/logger';
 import ObjectID from 'bson-objectid';
 
@@ -32,10 +34,12 @@ export interface TaskModifications {
 export class TaskModificationDetector {
 	private app: App;
 	private plugin: TickTickSync;
+	private folderSyncService?: FolderSyncService;
 
-	constructor(app: App, plugin: TickTickSync) {
+	constructor(app: App, plugin: TickTickSync, folderSyncService?: FolderSyncService) {
 		this.app = app;
 		this.plugin = plugin;
+		this.folderSyncService = folderSyncService;
 	}
 
 	/**
@@ -357,9 +361,11 @@ export class TaskModificationDetector {
 
 	/**
 	 * Handle task moving between projects/files
+	 * Also checks if project groups differ and moves file if necessary
 	 */
 	private async handleProjectMove(lineTask: ITask, savedTask: ITask, oldPath: string, newPath: string): Promise<void> {
 		await this.plugin.tickTickRestAPI?.moveTaskProject(lineTask, savedTask.projectId, lineTask.projectId);
+		
 		const message = `Task ${lineTask.id} moved from ${oldPath} to ${newPath}`;
 		new Notice(message, 5000);
 		log.debug(message);

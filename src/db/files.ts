@@ -2,7 +2,9 @@ import { db } from "./dexie";
 import type { LocalFile } from './schema';
 
 export async function upsertFile(path: string, defaultProjectId?: string) {
+	const existing = await db.files.get(path);
 	await db.files.put({
+		...existing,
 		path,
 		defaultProjectId
 	});

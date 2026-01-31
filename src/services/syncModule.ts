@@ -1575,8 +1575,6 @@ export class SyncMan {
 		const parentTask = await this.plugin.cacheOperation?.loadTaskFromCacheID(parentID);
 		if (parentTask && parentTask.items) { //we have some items.
 			if (itemId) {
-				log.debug('Updating Item: ', itemId);
-				log.debug('items: ', parentTask.items);
 				const oldItem = parentTask.items.find((item) => item.id == itemId);
 				if (oldItem) {
 					if (oldItem.title.trim() != newItem.description.trim() ||

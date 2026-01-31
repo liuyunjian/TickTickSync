@@ -11,6 +11,7 @@
 	let fileLinksInTickTick: string;
 	let taskLinksInObsidian: string;
 	let syncNotes: boolean;
+	let keepProjectFolders: boolean;
 	let linkBehaviorOptions: Record<string, string> = LINK_BEHAVIOR;
 
 	function setIsWorking(value: boolean) {
@@ -24,6 +25,7 @@
 	$: fileLinksInTickTick = $settingsStore.fileLinksInTickTick;
 	$: taskLinksInObsidian = $settingsStore.taskLinksInObsidian;
 	$: syncNotes = $settingsStore.syncNotes;
+	$: keepProjectFolders = $settingsStore.keepProjectFolders;
 
 	// Remove noteLink from options if needed
 	$: if (!syncNotes) {
@@ -43,6 +45,33 @@
 		settingsStore.update((s) => ({ ...s, fileLinksInTickTick: value }));
 		await plugin.saveSettings();
 	}
+
+	async function handleKeepProjectFoldersChange(event: Event) {
+		const checked = (event.target as HTMLInputElement).checked;
+		settingsStore.update((s) => ({ ...s, keepProjectFolders: checked }));
+		await plugin.saveSettings();
+		
+		if (checked) {
+			// Offer to reorganize existing files
+			//todo: put up confirmation dialog same as other dialogs.
+			const shouldReorganize = confirm(
+				'Would you like to reorganize existing task files into folders now?\n\n' +
+				'This will move plugin-managed files to match your TickTick folder structure.\n' +
+				'Files without a default project will not be moved.'
+			);
+			
+			if (shouldReorganize) {
+				setIsWorking(true);
+				try {
+					await plugin.reorganizeFilesToFolders();
+				} catch (error) {
+					console.error('Error reorganizing files:', error);
+				} finally {
+					setIsWorking(false);
+				}
+			}
+		}
+	}
 </script>
 <div class="{isWorking ? 'wait-cursor' : 'default-cursor'}">
 	{#if !syncNotes}
@@ -55,6 +84,23 @@
 	{/if}
 
 	<div class="task-settings ">
+		<div class="setting-item">
+			<div class="setting-item-info">
+				<div class="setting-item-name">Organize tasks by TickTick folders</div>
+				<div class="setting-item-description">
+					When enabled, tasks will be organized into Obsidian folders matching your TickTick folder structure.
+					Files without a default project will not be moved.
+				</div>
+			</div>
+			<div class="setting-item-control">
+				<input
+					type="checkbox"
+					checked={keepProjectFolders}
+					on:change={handleKeepProjectFoldersChange}
+				/>
+			</div>
+		</div>
+
 		<div class="setting-item">
 			<div class="setting-item-info">
 				<div class="setting-item-name">Task link handling in Obsidian</div>
