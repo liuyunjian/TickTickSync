@@ -406,10 +406,6 @@ export class FileMap {
 		const parentId = this.getParentIDByIdx(lineNumber);
 		taskRecord = this.getTaskLinesByIdx(lineNumber, taskRecord);
 		taskRecord.parentId = parentId;
-		//TODO: Why did I think this was necessary?
-		//we're adding a task. The task notes, if any are going to be added
-		//back in when we do the inevitable update. Get rid of the original
-		//note lines here.
 		if (taskRecord.taskLines && taskRecord.taskLines.length > 0) {
 			this.fileLines.splice(lineNumber + 1, taskRecord.taskLines.length - 1);
 			//rewrite the file to gett rid of them
@@ -450,8 +446,16 @@ export class FileMap {
 		return modified;
 	}
 
-	modifyTask(text: string, line: number) {
-		this.fileLines[line] = text;
+	async modifyTask(text: string, line: number) {
+		const existingTaskRecord: ITaskRecord = await this.getTaskRecordByLine(line)
+		if (existingTaskRecord) {
+			this.fileLines.splice(line, 1, text)
+		} else {
+			log.warn("there wasn't a task record when we're trying to modify.")
+			this.fileLines[line] = text;
+		}
+		const newContent = this.fileLines.join('\n');
+		await this.app.vault.modify(this.file, newContent);
 	}
 
 	hasTasks(fullVaultSync: boolean) {

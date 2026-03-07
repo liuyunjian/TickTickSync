@@ -64,8 +64,7 @@ const priorityMapping = [{ ticktick: 0, obsidian: null }, { ticktick: 0, obsidia
 }, { ticktick: 3, obsidian: '🔼' }, { ticktick: 5, obsidian: '⏫' }, { ticktick: 5, obsidian: '🔺' }];
 
 
-//borrowed from https://github.com/moremeyou/Obsidian-Tag-Buddy
-const tag_regex = /(?<=^|\s)(#(?=[^\s#.'’,;!?:]*[^\d\s#.'’,;!?:])[^\s#.'’,;!?:]+)(?=[.,;!?:'’\s]|$)|(?<!`)```(?!`)/g; // fix for number-only and typographic apostrophy's
+const tag_regex = /(^|\s)#[\p{L}\p{N}_/-]+/gu;
 // const due_date_regex = `(${keywords.DUE_DATE})\\s(\\d{4}-\\d{2}-\\d{2})(\\s\\d{1,}:\\d{2})?`
 const due_date_regex = `(${keywords.DUE_DATE})\\s(\\d{4}-\\d{2}-\\d{2})\\s*(\\d{1,}:\\d{2})*`;
 const due_date_strip_regex = `[${keywords.DUE_DATE}]\\s\\d{4}-\\d{2}-\\d{2}(\\s\\d{1,}:\\d{2}|)`;
@@ -222,7 +221,7 @@ export class TaskParser {
 		let taskContent = lineText.replace(REGEX.TASK_CONTENT.REMOVE_INLINE_METADATA, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_TickTick_LINK, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_PRIORITY, '')
-			.replace(REGEX.TASK_CONTENT.REMOVE_TAGS, '')
+		    .replace(REGEX.TASK_CONTENT.REMOVE_TAGS, ' ')
 			.replace(REGEX.TASK_CONTENT.REMOVE_CHECKBOX, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_CHECKBOX_WITH_INDENTATION, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_SPACE, '');
@@ -249,6 +248,7 @@ export class TaskParser {
 				resultLine = resultLine + ' #' + tag;
 			}
 		});
+		log.debug("resultLine:", resultLine);
 		return resultLine;
 	}
 
@@ -335,6 +335,7 @@ export class TaskParser {
 		let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 		const tags = this.getAllTagsFromLineText(textWithoutIndentation);
+		log.debug("tags", tags);
 
 		let projectId = await this.plugin.cacheOperation?.getDefaultProjectIdForFilepath(filepath as string);
 
@@ -438,6 +439,7 @@ export class TaskParser {
 				textContent = descriptionStrings.length > 0 ? descriptionStrings.join('\n') : '';
 			}
 		}
+		log.warn("Text Content in GetNoteString", textContent);
 		return textContent ;
 	}
 
@@ -527,7 +529,7 @@ export class TaskParser {
 		//     tags = tags.map(tag => tag.replace('#', ''));
 		// }
 		const tags = [...lineText.matchAll(REGEX.ALL_TAGS)];
-		let tagArray = tags.map(tag => tag[0].replace('#', ''));
+		let tagArray = tags.map(tag => tag[0].replace(' #', ''));
 		tagArray = tagArray.map(tag => tag.replace(/\//g, '-'));
 		// tagArray.forEach(tag => log.debug("#### get all tags", tag))
 

@@ -509,6 +509,12 @@ export class FileOperation {
 						filePathForNewProject = await this.handleTickTickStructureMove(task, vaultTask, lineText, fileMap);
 						//because we need to update the OBS URL in TT and fix up the cache.
 						bTaskMove = true;
+
+						// Check if project groups differ and move file if necessary
+						const localTaskRecord = await this.plugin.cacheOperation?.loadLocalTaskFromCacheID(task.id);
+						if (localTaskRecord) {
+							await this.plugin.taskModificationDetector?.checkForProjectGroupChange(task, localTaskRecord);
+						}
 					} else {
 						const bParentUpdate = this.plugin.taskParser?.isParentIdChanged(vaultTask, task);
 						fileMap.updateTask(task, lineText, bParentUpdate);
@@ -537,14 +543,27 @@ export class FileOperation {
 				}
 			}
 
+			// Calculate hash for change detection
+			const taskRecord = fileMap.getTaskRecord(task.id);
+			const taskString = taskRecord.task;
+			const stringToHash = taskString + this.plugin.taskParser.getNoteString(taskRecord, task.id);
+			let lineHash = await this.plugin.taskParser?.getLineHash(stringToHash);
+			if (!lineHash) {
+				lineHash = '';
+			}
+
+
 			if (!bUpdating) {
 				//we're updating the task to get the right OBS URL in there.
 				let addedTask = await this.plugin.tickTickRestAPI?.updateTask(task);
+				addedTask.lineHash = lineHash;
 				await this.plugin.cacheOperation?.appendTaskToCache(addedTask, file.path, Date.now());
 			} else {
 				if (!bTaskMove) {
+					task.lineHash = lineHash;
 					await this.plugin.cacheOperation?.updateTaskToCache(task, file.path, Date.now());
 				} else {
+					addedTask.lineHash = lineHash;
 					let addedTask = await this.plugin.tickTickRestAPI?.updateTask(task);
 					await this.plugin.cacheOperation?.updateTaskToCache(addedTask, filePathForNewProject, Date.now());
 				}

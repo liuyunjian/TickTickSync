@@ -147,9 +147,11 @@ export class VaultSyncCoordinator {
 			const projectName = await this.plugin.cacheOperation.getProjectNameByIdFromCache(task.projectId);
 			if (projectName) {
 				targetFile = await this.folderSyncService.getFilePathForTask(task, projectName);
+				log.debug(`Determined target file for task ${task.id}: ${targetFile}`);
 				// Ensure the folder exists
 				const folderPath = await this.folderSyncService.getFolderPathForTask(task);
 				if (folderPath) {
+					log.debug(`Ensuring folder exists: ${folderPath}`);
 					await this.folderSyncService.ensureFolderExists(folderPath);
 				}
 			}

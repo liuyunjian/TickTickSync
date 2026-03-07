@@ -66,8 +66,7 @@ export class TaskDeletionHandler {
 		}
 
 		if (!currentFileValue) {
-			log.error('File content not readable:', filepath);
-			return;
+			log.warn('File content not readable:', filepath, "assuming all tasks deleted.");
 		}
 
 		// Remove frontmatter from content
@@ -235,7 +234,7 @@ export class TaskDeletionHandler {
 		// Delete each task from TickTick and database
 		for (const taskId of taskIds) {
 			try {
-				const projectId = await this.fileTaskQueries.getDefaultProjectForFile(taskId);
+				const projectId = await this.plugin.cacheOperation?.getProjectIdForTask(taskId);
 
 				// Delete from TickTick
 				if (projectId) {

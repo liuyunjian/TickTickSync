@@ -20,6 +20,8 @@ const {
 	allHabitsEndPoint,
 	allProjectGroupsEndPoint,
 	allProjectsEndPoint,
+	projectEndPoint,
+	updateProjectEndPoint,
 	allTasksEndPoint,
 	signInEndPoint,
 	userPreferencesEndPoint,
@@ -270,9 +272,35 @@ export class Tick {
 		}
 	}
 
+	async updateProject(project: IProject): Promise<any> {
+		try {
+			let updatePayload: any;
+			updatePayload = {
+				add: [],
+				addAttachments: [],
+				delete: [],
+				deleteAttachments: [],
+				updateAttachments: [],
+				update: [project]
+			};
+			const url = `${this.apiUrl}/${updateProjectEndPoint}`;
+			const response = await this.makeRequest('Update project', url, 'POST', updatePayload);
+			// log.debug('Update Project Response: ', response);
+			if (response) {
+				return response;
+			} else {
+				return null;
+			}
+		} catch (e) {
+			log.error('Get Project Sections failed: ', e);
+			this.setError('Get Project Sections', null, e);
+			return [];
+		}
+	}
+
 	async getUpdatedTasks(since: number): Promise<{ update: ITask[], delete: string[] }> {
 		try {
-			log.debug('Get updated tasks', 'Since', since > 0 ?new Date(since).toISOString() : 'from the beginning of time.');
+			log.debug('Get updated tasks', 'Since', since > 0 ? new Date(since).toISOString() : 'from the beginning of time.');
 			const url = `${this.apiUrl}/${allTasksEndPoint}` + since;
 			const response = await this.makeRequest('Get All Resources', url, 'GET', undefined);
 			if (response) {

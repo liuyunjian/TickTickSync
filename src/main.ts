@@ -193,7 +193,7 @@ export default class TickTickSync extends Plugin {
 		this.projectGroupRepository = new ProjectGroupRepository();
 
 		//NEW: Initialize services
-		this.folderSyncService = new FolderSyncService(this.app, this.projectGroupRepository);
+		this.folderSyncService = new FolderSyncService(this.app, this, this.projectGroupRepository);
 		this.folderMigrationService = new FolderMigrationService(this.app, this.folderSyncService);
 		this.vaultSyncCoordinator = new VaultSyncCoordinator(this.app, this, this.folderSyncService);
 		this.taskModificationDetector = new TaskModificationDetector(this.app, this, this.folderSyncService);
@@ -538,7 +538,7 @@ export default class TickTickSync extends Plugin {
 		// set default project for TickTick task in the current file
 		// This adds an editor command that can perform some operation on the current editor instance
 		this.addCommand({
-			id: 'set-default-project-for-TickTick-task-in-the-current-file',
+			id: 'tts-default-project-for-file',
 			name: 'Set default TickTick project for current file',
 			editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
 				if (!view || !view.file) {
@@ -653,7 +653,7 @@ export default class TickTickSync extends Plugin {
 
 	}
 	private dumpDB() {
-		let dbName = 'test-vault-syncthingTickTickSync';
+		let dbName = getSettings().vaultName  + "TickTickSync";
 		const request = indexedDB.open(dbName);
 
 		request.onsuccess = async (event) => {

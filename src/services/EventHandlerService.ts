@@ -7,6 +7,7 @@ import { App, Editor, type MarkdownFileInfo, MarkdownView, TFile, TFolder } from
 import type TickTickSync from '@/main';
 import { getSettings } from '@/settings';
 import log from '@/utils/logger';
+import { FileOperation } from '@/fileOperation';
 
 export class EventHandlerService {
 	private app: App;
@@ -141,7 +142,11 @@ export class EventHandlerService {
 				}
 
 				// Register the file in metadata so it can be scanned for tasks
-				await this.plugin.cacheOperation?.getFileMetadata(file.path);
+				if (this.plugin.fileOperation.isMarkdownFile(file.name)) {
+					await this.plugin.cacheOperation?.getFileMetadata(file.path);
+				} else {
+					log.debug('non markdown file detected.', file.name);
+				}
 			})
 		);
 
@@ -182,6 +187,10 @@ export class EventHandlerService {
 					}
 
 					const filepath = file.path;
+					if (!this.plugin.fileOperation.isMarkdownFile(file.path)) {
+						log.debug('on modify non markdown file detected.', file.path);
+						return;
+					}
 					const activateFile = this.app.workspace.getActiveFile();
 
 					// To avoid conflicts, do not check files being edited

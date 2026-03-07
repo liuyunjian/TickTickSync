@@ -7,7 +7,6 @@ import { getSettings, updateSettings } from '@/settings';
 //logging
 import log from '@/utils/logger';
 import { getTick } from '@/api/tick_singleton_factory';
-import Dexie from 'dexie';
 
 export class TickTickRestAPI {
 	get checkpoint(): number {
@@ -137,6 +136,15 @@ export class TickTickRestAPI {
 			return response;
 		} catch (error) {
 			throw new Error(`Error deleting task: ${error.message}`);
+		}
+	}
+
+	async updateProject(projectId: IProject) {
+		await this.initializeAPI();
+		try {
+			return await this.api?.updateProject(projectId);
+		} catch (error) {
+			throw new Error(`Error updating project: ${error.message}`);
 		}
 	}
 

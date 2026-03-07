@@ -247,6 +247,40 @@ export class CacheOperation {
 		}
 	}
 
+	async getFolderPathForProject(projectId: string) {
+		// Otherwise, compute expected path for this project.
+		const projectName = await this.getProjectNameByIdFromCache(projectId);
+		log.debug("Project Name Request: ", projectId, projectName);
+		if (!projectName) {
+			const errmsg = `File path not found for ${projectId}, returning ${projectName} instead.`;
+			log.warn(errmsg);
+			throw new Error(errmsg);
+		}
+
+		const folder = getDefaultFolder();
+
+		// Folder organization: baseFolder/<groupName>/<projectName>.md
+		if (getSettings().keepProjectFolders) {
+			const project = await getProjectById(projectId);
+			const groupId = project?.groupId;
+
+			if (groupId) {
+				const group = await db.projectGroups.get(groupId);
+				const groupName = group?.group?.name;
+
+				if (groupName && groupName.trim().length > 0) {
+					const sanitize = (name: string): string =>
+						name.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+
+					const safeGroupName = sanitize(groupName);
+					const safeProjectName = sanitize(projectName);
+					const base = (folder ? folder + "/" : "");
+					return `${base}${safeGroupName}/${safeProjectName}`;
+				}
+			}
+		}
+
+	}
 
 	async getFilepathForProjectId(projectId: string) {
 		if ((projectId) || (projectId !== '')) {
@@ -268,40 +302,11 @@ export class CacheOperation {
 					return (folder ? folder + "/" : "") + getSettings().defaultProjectName + ".md";
 				}
 			}
-
-			// Otherwise, compute expected path for this project.
-			const projectName = await this.getProjectNameByIdFromCache(projectId);
-			if (!projectName) {
-				const errmsg = `File path not found for ${projectId}, returning ${projectName} instead.`;
-				log.warn(errmsg);
-				throw new Error(errmsg);
-			}
-
-			const folder = getDefaultFolder();
-
-			// Folder organization: baseFolder/<groupName>/<projectName>.md
-			if (getSettings().keepProjectFolders) {
-				const project = await getProjectById(projectId);
-				const groupId = project?.groupId;
-
-				if (groupId) {
-					const group = await db.projectGroups.get(groupId);
-					const groupName = group?.group?.name;
-
-					if (groupName && groupName.trim().length > 0) {
-						const sanitize = (name: string): string =>
-							name.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
-
-						const safeGroupName = sanitize(groupName);
-						const safeProjectName = sanitize(projectName);
-						const base = (folder ? folder + "/" : "");
-						return `${base}${safeGroupName}/${safeProjectName}${FILE_EXT}`;
-					}
-				}
-			}
+			const folder = await this.getFolderPathForProject(projectId);
+			log.debug("Returning folder: " + (folder ? folder + "/" : "")  + FILE_EXT);
 
 			// Flat structure: baseFolder/<projectName>.md
-			return (folder ? folder + "/" : "") + projectName + FILE_EXT;
+			return (folder ? folder + "/" : "")  + FILE_EXT;
 		} else {
 			const folder = getDefaultFolder();
 			if (getSettings().defaultProjectName) {
@@ -368,6 +373,10 @@ export class CacheOperation {
 			}
 			const meta = await db.meta.get("sync");
 			task.title = this.plugin.taskParser.stripOBSUrl(task.title);
+
+			if (!task.lineHash) {
+				log.error("linehash not set.")
+			}
 			
 			await upsertLocalTask(task, {
 				file: filePath,
@@ -395,7 +404,7 @@ export class CacheOperation {
 			const lt = await db.tasks.where("taskId").equals(taskId).first();
 			return lt?.task;
 		} catch (error) {
-			log.error(`Error finding task from Cache:`, error);
+			log.error(`Error finding task from Cache:`, taskId, error);
 		}
 		return undefined;
 	}
@@ -608,11 +617,12 @@ export class CacheOperation {
 				return getSettings().defaultProjectName;
 			}
 			const targetProject = await getProjectById(projectId);
+			log.debug('getProjectNameByIdFromCache: ', targetProject);
 			if (!targetProject) return undefined;
 			// if (addFolder) {
 			// 	const groupName = getProjectGroups().find(g => g.id == targetProject.groupId)?.name;
 			// 	if (groupName) return groupName + '/' + targetProject.name;
-			// }
+			//
 			return targetProject.name;
 		} catch (error) {
 			log.error(`Error finding project ${projectId} from Cache file: ${error}`);
@@ -797,21 +807,66 @@ export class CacheOperation {
 		}
 		if (project?.name !== ttProjectName) {
 			log.debug(`Project Name Changed from ${project?.name} to ${ttProjectName}`)
-			const currentProjectPath = await this.getFilepathForProjectId(ttProjectId);
 
-			const correctFileName = `${getDefaultFolder()}/${ttProjectName}.md`;
-			log.debug(`Checking project rename for ${ttProjectName}, which could be ${correctFileName}`);
+			// Find the existing file for this project
+			const files = await getAllFiles();
+			const currentFile = files.find(f => f.defaultProjectId === ttProjectId);
 
-			if (currentProjectPath !== correctFileName) {
-				log.debug(`Current project path is ${currentProjectPath}, which is not ${correctFileName}`);
-				const vaultFile = this.app.vault.getAbstractFileByPath(currentProjectPath);
+			let currentFilePath;
+
+			if (!currentFile) {
+				log.debug(`No file found for project ${ttProjectId}`);
+				currentFilePath = await this.getFilepathForProjectId( ttProjectId );
+				log.debug(`currentFilePath: ${currentFilePath}`);
+				if (!currentFilePath) {
+					log.debug(`No file found for project ${ttProjectId} and no default file found`);
+					return
+				}
+				if (!currentFilePath) {
+					log.debug(`No file found for project ${ttProjectId} and no default file found`);
+					return
+				}
+			} else {
+				currentFilePath = currentFile.path;
+			}
+
+
+
+			// Calculate the correct new file path
+			const folder = getDefaultFolder();
+			const sanitize = (name: string): string =>
+				name.replace(/[\\/:*?"<>|]/g, '-').replace(/\s+/g, ' ').trim();
+			const safeProjectName = sanitize(ttProjectName);
+
+			let newFilePath: string;
+			if (getSettings().keepProjectFolders && ttProject?.groupId) {
+				const group = await db.projectGroups.get(ttProject.groupId);
+				const groupName = group?.group?.name;
+
+				if (groupName && groupName.trim().length > 0) {
+					const safeGroupName = sanitize(groupName);
+					const base = (folder ? folder + "/" : "");
+					newFilePath = `${base}${safeGroupName}/${safeProjectName}${FILE_EXT}`;
+				} else {
+					newFilePath = (folder ? folder + "/" : "") + safeProjectName + FILE_EXT;
+				}
+			} else {
+				newFilePath = (folder ? folder + "/" : "") + safeProjectName + FILE_EXT;
+			}
+
+			log.debug(`Renaming project file from ${currentFilePath} to ${newFilePath}`);
+
+			// Check if the file needs to be renamed
+			if (currentFilePath !== newFilePath) {
+				const vaultFile = this.app.vault.getAbstractFileByPath(currentFilePath);
 				if (vaultFile && vaultFile instanceof TFile) {
-					log.debug(`Renaming ${currentProjectPath} to ${correctFileName}`);
-					await this.app.vault.rename(vaultFile, correctFileName);
-					log.debug(`Updating metadata key for ${currentProjectPath} to ${correctFileName}  === \n ${fileMetadata[currentProjectPath]}`);
-					await this.updateFileMetadata(correctFileName, fileMetadata[currentProjectPath]);
-					log.debug(`Deleting ${currentProjectPath} from metadata`);
-					await this.deleteFilepathFromMetadata(currentProjectPath);
+					log.debug(`Renaming ${currentFilePath} to ${newFilePath}`);
+					await this.app.vault.rename(vaultFile, newFilePath);
+					log.debug(`Updating file path in database from ${currentFilePath} to ${newFilePath}`);
+					await this.updateRenamedFilePath(currentFilePath, newFilePath);
+				} else {
+					log.warn(`File ${currentFilePath} not found in vault, updating database only`);
+					await this.updateRenamedFilePath(currentFilePath, newFilePath);
 				}
 			}
 		}

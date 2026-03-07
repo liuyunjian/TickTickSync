@@ -9,13 +9,22 @@
  * - Calculate change hashes for efficiency
  */
 
-import { App, Editor, type EditorPosition, type MarkdownFileInfo, MarkdownView, Notice, TFile, TFolder } from 'obsidian';
+import {
+	App,
+	Editor,
+	type EditorPosition,
+	type MarkdownFileInfo,
+	MarkdownView,
+	Notice,
+	TFile,
+	TFolder
+} from 'obsidian';
 import type TickTickSync from '@/main';
 import type { ITask } from '@/api/types/Task';
+import type { LocalTask } from '@/db/schema';
 import { FileMap } from '@/services/fileMap';
 import { FolderSyncService } from '@/services/FolderSyncService';
 import { getSettings } from '@/settings';
-import { getProjectById } from '@/db/projects';
 import log from '@/utils/logger';
 import ObjectID from 'bson-objectid';
 
@@ -171,7 +180,7 @@ export class TaskModificationDetector {
 	): Promise<boolean> {
 		// Early validation
 		if (!this.plugin.taskParser?.hasTickTickId(lineText) ||
-		    !this.plugin.taskParser?.hasTickTickTag(lineText)) {
+			!this.plugin.taskParser?.hasTickTickTag(lineText)) {
 			// Check if it's a task item instead
 			if (this.plugin.taskParser.isMarkdownTask(lineText)) {
 				return await this.checkTaskItemModification(lineText, fileMap, lineNumber);
@@ -237,9 +246,40 @@ export class TaskModificationDetector {
 
 		// Detect what changed
 		const modifications = this.detectModifications(lineTask, savedTask, taskRecord);
+		log.warn("modifications: ", lineText, JSON.stringify(modifications, null, 2	));
 
 		// Apply modifications
 		return await this.applyModifications(lineTask, savedTask, modifications, filepath, taskId, newHash);
+	}
+
+	/**
+	 * Check entire file for modifications
+	 */
+	async checkFileForModifications(filepath: string | null): Promise<void> {
+		if (!filepath) {
+			return;
+		}
+
+		const file = this.app.vault.getAbstractFileByPath(filepath);
+		if (!file || file instanceof TFolder) {
+			return;
+		}
+
+		const fileMap = new FileMap(this.app, this.plugin, file);
+		await fileMap.init();
+
+		const lines: string[] = fileMap.getFileLines().split('\n');
+
+		for (let i = 0; i < lines.length; i++) {
+			const line = lines[i];
+			if (this.plugin.taskParser?.isMarkdownTask(line)) {
+				try {
+					await this.checkLineForModifications(filepath, line, i, fileMap);
+				} catch (error) {
+					log.error('Error checking task modification:', error);
+				}
+			}
+		}
 	}
 
 	/**
@@ -341,19 +381,22 @@ export class TaskModificationDetector {
 	 */
 	private hasContentChanges(modifications: TaskModifications): boolean {
 		return modifications.titleModified ||
-		       modifications.tagsModified ||
-		       modifications.datesModified ||
-		       modifications.parentIdModified ||
-		       modifications.priorityModified ||
-		       modifications.taskItemsModified ||
-		       modifications.notesModified ||
-		       modifications.projectMoved;
+			modifications.tagsModified ||
+			modifications.datesModified ||
+			modifications.parentIdModified ||
+			modifications.priorityModified ||
+			modifications.taskItemsModified ||
+			modifications.notesModified ||
+			modifications.projectMoved;
 	}
 
 	/**
 	 * Check if task moved to a different file/project
 	 */
-	private async checkForTaskMove(taskId: string, currentPath: string): Promise<{ moved: boolean; oldFilePath: string }> {
+	private async checkForTaskMove(taskId: string, currentPath: string): Promise<{
+		moved: boolean;
+		oldFilePath: string
+	}> {
 		const oldFilePath = await this.plugin.cacheOperation.getFilepathForTask(taskId);
 		const moved = !!(oldFilePath && oldFilePath !== currentPath);
 		return { moved, oldFilePath: oldFilePath || '' };
@@ -365,10 +408,86 @@ export class TaskModificationDetector {
 	 */
 	private async handleProjectMove(lineTask: ITask, savedTask: ITask, oldPath: string, newPath: string): Promise<void> {
 		await this.plugin.tickTickRestAPI?.moveTaskProject(lineTask, savedTask.projectId, lineTask.projectId);
-		
+
 		const message = `Task ${lineTask.id} moved from ${oldPath} to ${newPath}`;
 		new Notice(message, 5000);
 		log.debug(message);
+	}
+
+	/**
+	 * Check if a task's project changed to a different project group
+	 * If so, trigger file movement to the new project group's folder
+	 * @param task - The updated task from TickTick
+	 * @param localTask - The local task record from database
+	 */
+	async checkForProjectGroupChange(task: ITask, localTask: LocalTask): Promise<void> {
+		// Only check if folder organization is enabled
+		if (!getSettings().keepProjectFolders) {
+			return;
+		}
+
+		// Don't move unassociated files
+		if (!this.folderSyncService) {
+			return;
+		}
+
+		const shouldManage = await this.folderSyncService.shouldManageFile(localTask.file);
+		if (!shouldManage) {
+			log.debug(`File ${localTask.file} is user-managed, skipping project group change check`);
+			return;
+		}
+
+		try {
+			// Check if projects are in different groups
+			const groupsAreDifferent = await this.folderSyncService.projectsInDifferentGroups(
+				localTask.task.projectId,
+				task.projectId
+			);
+
+			if (groupsAreDifferent) {
+				log.info(`Task ${task.id} moved to different project group`);
+				await this.handleProjectGroupMove(task, localTask);
+			}
+		} catch (error) {
+			log.error(`Error checking for project group change for task ${task.id}:`, error);
+		}
+	}
+
+	/**
+	 * Handle moving a task's file when its project group changes
+	 * @param task - The updated task with new projectId
+	 * @param localTask - The local task record with current file path
+	 */
+	private async handleProjectGroupMove(task: ITask, localTask: LocalTask): Promise<void> {
+		if (!this.folderSyncService) {
+			return;
+		}
+
+		try {
+			const oldPath = localTask.file;
+
+			// Get the new folder path based on task's new project
+			const newFolderPath = await this.folderSyncService.getFolderPathForTask(task);
+
+			// Extract filename from old path
+			const filename = oldPath.split('/').pop() || 'Unknown.md';
+
+			// Move the file
+			const newPath = await this.folderSyncService.moveFileToProjectFolder(
+				oldPath,
+				newFolderPath,
+				filename
+			);
+
+			if (newPath) {
+				const message = `Task ${task.id} file moved from ${oldPath} to ${newPath} due to project group change`;
+				new Notice(message, 5000);
+				log.info(message);
+			}
+		} catch (error) {
+			log.error(`Error handling project group move for task ${task.id}:`, error);
+			new Notice(`Error moving task file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+		}
 	}
 
 	/**
@@ -525,36 +644,6 @@ export class TaskModificationDetector {
 	}
 
 	/**
-	 * Check entire file for modifications
-	 */
-	async checkFileForModifications(filepath: string | null): Promise<void> {
-		if (!filepath) {
-			return;
-		}
-
-		const file = this.app.vault.getAbstractFileByPath(filepath);
-		if (!file || file instanceof TFolder) {
-			return;
-		}
-
-		const fileMap = new FileMap(this.app, this.plugin, file);
-		await fileMap.init();
-
-		const lines: string[] = fileMap.getFileLines().split('\n');
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			if (this.plugin.taskParser?.isMarkdownTask(line)) {
-				try {
-					await this.checkLineForModifications(filepath, line, i, fileMap);
-				} catch (error) {
-					log.error('Error checking task modification:', error);
-				}
-			}
-		}
-	}
-
-	/**
 	 * Update task line in file with TickTick ID
 	 */
 	private async updateTaskLineInFile(
@@ -565,24 +654,16 @@ export class TaskModificationDetector {
 		line: number | null,
 		fileMap: FileMap
 	): Promise<void> {
-		const newTaskCopy = { ...newTask };
-		newTaskCopy.items = []; // Don't include items in the line
-
 		const numTabs = this.plugin.taskParser.getNumTabs(lineTxt);
-		const text = await this.plugin.taskParser?.convertTaskToLine(newTaskCopy, numTabs);
+		const decoratedText = await this.plugin.taskParser?.convertTaskToLine(newTask, numTabs);
+		log.warn("updateTaskLineInFile:", decoratedText);
 
-		if (editor && cursor) {
-			const from = { line: cursor.line, ch: 0 };
-			const to = { line: cursor.line, ch: lineTxt.length };
-			editor.replaceRange(text, from, to);
-		} else if (line !== null) {
-			try {
-				fileMap.modifyTask(text, line);
-				const file = this.app.vault.getAbstractFileByPath(fileMap.getFilePath());
-				await this.app.vault.modify(file, fileMap.getFileLines());
-			} catch (error) {
-				log.error('Error updating task line in file:', error);
-			}
+		try {
+			await fileMap.modifyTask(decoratedText, line)
+		} catch (error) {
+			log.error('Error updating task line in file:', error);
 		}
+
+
 	}
 }

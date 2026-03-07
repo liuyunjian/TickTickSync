@@ -10,6 +10,7 @@
 	export let plugin: TickTickSync;
 
 	let folderOptions: Record<string, string> = {};
+	let isCheckingDatabase = false;
 
 	async function handleManualSync() {
 		if (!getSettings().token) {
@@ -59,6 +60,17 @@
 		return folderOptions;
 	}
 
+	async function handleCheckDatabase() {
+		isCheckingDatabase = true;
+		document.body.style.cursor = 'wait';
+		try {
+			await plugin.service.checkDataBase();
+		} finally {
+			isCheckingDatabase = false;
+			document.body.style.cursor = '';
+		}
+	}
+
 	onMount(async () => {
 		folderOptions = getFolderOptions();
 	});
@@ -73,7 +85,7 @@
 				<div class="setting-item-description">Manually perform a synchronization task</div>
 			</div>
 			<div class="setting-item-control">
-				<button class="mod-cta" on:click={handleManualSync}>
+				<button class="mod-cta" on:click={handleManualSync} disabled={isCheckingDatabase}>
 					Sync
 				</button>
 			</div>
@@ -89,8 +101,9 @@
 			<div class="setting-item-control">
 				<button
 					class="mod-cta"
-					on:click={() => plugin.service.checkDataBase()}>
-					Check Database
+					on:click={handleCheckDatabase}
+					disabled={isCheckingDatabase}>
+					{isCheckingDatabase ? 'Checking...' : 'Check Database'}
 				</button>
 			</div>
 		</div>
@@ -106,7 +119,8 @@
 			<div class="setting-item-control">
 				<button
 					class="mod-cta"
-					on:click={() => plugin.service.backup()}>
+					on:click={() => plugin.service.backup()}
+					disabled={isCheckingDatabase}>
 					Backup
 				</button>
 			</div>

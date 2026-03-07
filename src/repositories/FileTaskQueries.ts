@@ -64,6 +64,7 @@ export class FileTaskQueries {
 	async getDefaultProjectForFile(filepath: string): Promise<string | undefined> {
 		try {
 			const file = await getFile(filepath);
+			log.debug(`Default project for file ${filepath}:`, file?.defaultProjectId);
 			return file?.defaultProjectId;
 		} catch (error) {
 			log.error(`Error getting default project for file ${filepath}:`, error);

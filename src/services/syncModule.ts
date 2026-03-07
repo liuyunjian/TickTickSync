@@ -185,6 +185,7 @@ export class SyncMan {
 		if (!lineTxt || lineTxt.length == 0) {
 			return;
 		}
+		log.error("syncmodule addTask called.")
 
 		if ((!this.plugin.taskParser.hasTickTickId(lineTxt) && this.plugin.taskParser.hasTickTickTag(lineTxt))) {
 			//Whether #ticktick is included, but not ticktickid: Task just added.
@@ -1499,31 +1500,7 @@ export class SyncMan {
 		return { projectMoved, oldFilePath };
 	}
 
-	private async updateTaskLine(newTask: ITask, lineTxt: string, editor: Editor | null, cursor: EditorPosition | null, line: number | null, fileMap: FileMap) {
-		let newTaskCopy = { ...newTask };
-		newTaskCopy.items = [];
 
-		const numTabs = this.plugin.taskParser.getNumTabs(lineTxt);
-		let text = await this.plugin.taskParser?.convertTaskToLine(newTaskCopy, numTabs);
-
-		if (editor && cursor) {
-			const from = { line: cursor.line, ch: 0 };
-			const to = { line: cursor.line, ch: lineTxt.length };
-			editor?.replaceRange(text, from, to);
-			return text;
-		} else {
-			try {
-				// save file
-				fileMap.modifyTask(text, line);
-				//It would be more efficient to do one update when all is processed....
-				const file = this.app.vault.getAbstractFileByPath(fileMap.getFilePath());
-				await this.app.vault.modify(file, fileMap.getFileLines());
-				// log.error("Modified: ", file?.path, new Date().toISOString());
-			} catch (error) {
-				log.error(error);
-			}
-		}
-	}
 
 	private async confirmDeletion(taskIds: string[], reason: string) {
 		const items = await this.plugin.cacheOperation?.getDeletionItems(taskIds);

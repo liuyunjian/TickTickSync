@@ -15,7 +15,7 @@ import type { ITask } from '@/api/types/Task';
 import { getTick } from '@/api/tick_singleton_factory'
 import { syncTickTickWithDexie } from '@/sync/sync';
 import { db } from "@/db/dexie";
-import { getAllProjects } from "@/db/projects";
+import { getAllProjects, getProjectById, upsertProjects } from '@/db/projects';
 import { loadTasksFromCache } from "@/db/tasks";
 import { getAllFiles, getFile, upsertFile } from "@/db/files";
 import type { IProject } from '@/api/types/Project';
@@ -228,15 +228,66 @@ export class TickTickService {
 	async renamedFileCheck(filePath: string, oldPath: string): Promise<boolean> {
 		//NEW: Use FileTaskQueries
 		const hasTasks = await this.plugin.fileTaskQueries.fileHasTasks(oldPath);
-		if (!hasTasks) {
+		const hasDefaultProjectId = await this.cacheOperation.filepathHasDefaultProjectID(oldPath);
+
+		// Only process rename if file has tasks OR has a default project ID
+		if (!hasTasks && !hasDefaultProjectId) {
 			return false;
 		}
-		//TODO
-		// if (!(this.checkModuleClass())) {
-		// 	return;
-		// }
 
 		await doWithLock(LOCK_TASKS, async () => {
+			// Check if file was moved between folders (project groups), or got renamed.
+			const groupChange = await this.plugin.folderSyncService?.detectProjectGroupChange(oldPath, filePath);
+
+			if (groupChange?.changed) {
+				log.info(`File moved or renamed, updating tasks`);
+				//TODO: IS this the right place to do this?
+				if (groupChange.newGroupId) {
+					log.debug("group move ", groupChange)
+					const project = await getProjectById(groupChange.newProjectId);
+					if (!project) {
+						log.error("No project found for ID: ", groupChange.newProjectId)
+						return false;
+					}
+					if (project) {
+						project.groupId = groupChange.newGroupId
+						project.name = groupChange.newProjectName
+						const response = await this.plugin.tickTickRestAPI?.updateProject(project)
+						const aProjects: IProject[] = [];
+						aProjects.push(project);
+						await upsertProjects(aProjects)
+					}
+				}
+
+				// Get all tasks in this file
+				const tasks = await this.plugin.fileTaskQueries.getTasksInFile(oldPath);
+
+				// Move each task to the new project
+				for (const currentTask of tasks) {
+					try {
+						const task = await this.plugin.cacheOperation?.loadTaskFromCacheID(currentTask.taskId);
+						if (task && task.projectId !== groupChange.newProjectId) {
+							// Update project in TickTick
+							await this.plugin.tickTickRestAPI?.moveTaskProject(
+								task,
+								task.projectId,
+								groupChange.newProjectId
+							);
+
+							// Update local cache
+							task.projectId = groupChange.newProjectId;
+							await this.plugin.cacheOperation?.updateTaskToCache(task, filePath, Date.now());
+
+							log.debug(`Moved task ${task} to project ${groupChange.newProjectId}`);
+						}
+					} catch (error) {
+						log.error(`Error moving task ${currentTask} to new project:`, error);
+					}
+				}
+
+				new Notice(`File moved to different project group. ${tasks.length} task(s) updated.`);
+			}
+
 			//NEW: Use TaskOperationsService
 			await this.plugin.taskOperationsService.updateTaskContentForFile(filePath);
 			await this.cacheOperation.updateRenamedFilePath(oldPath, filePath);
@@ -284,7 +335,26 @@ export class TickTickService {
 		const tasksToDelete: { filepath: string, taskId: string, title: string }[] = [];
 
 		await doWithLock(LOCK_TASKS, async () => {
-			// 1. Ensure all vault files are in DB and match with projects if possible
+			// 1. Handle files that were moved/renamed (have tasks but wrong path in DB)
+			for (const dbFile of dbFiles) {
+				const vaultFile = vault.getAbstractFileByPath(dbFile.path);
+				if (!vaultFile || !(vaultFile instanceof TFile)) {
+					const metadata = await this.cacheOperation.getFileMetadata(dbFile.path);
+					if (metadata && metadata.TickTickTasks && metadata.TickTickTasks.length > 0) {
+						const task1 = metadata.TickTickTasks[0];
+						const searchResult = await this.fileOperation?.searchFilepathsByTaskidInVault(task1.taskId);
+						if (searchResult) {
+							log.debug(`File ${dbFile.path} moved to ${searchResult}. Updating DB.`);
+							await this.cacheOperation.updateRenamedFilePath(dbFile.path, searchResult);
+							continue;
+						}
+					}
+					log.debug(`Removing DB entry for non-existent file: ${dbFile.path}`);
+					await this.cacheOperation.deleteFilepathFromMetadata(dbFile.path);
+				}
+			}
+
+			// 2. Ensure all vault files are in DB and match with projects if possible
 			for (const file of markdownFiles) {
 				const dbFile = await getFile(file.path);
 				if (!dbFile) {
@@ -305,26 +375,6 @@ export class TickTickService {
 						log.debug(`Project mismatch  DB entry: ${file.path} -> ${matchingProject?.id} vs ${dbFile.defaultProjectId}`);
 						await upsertFile(file.path, matchingProject?.id);
 					}
-				}
-			}
-
-
-			// 2. Remove DB entries for files that no longer exist in vault, or update if renamed
-			for (const dbFile of dbFiles) {
-				const vaultFile = vault.getAbstractFileByPath(dbFile.path);
-				if (!vaultFile || !(vaultFile instanceof TFile)) {
-					const metadata = await this.cacheOperation.getFileMetadata(dbFile.path);
-					if (metadata && metadata.TickTickTasks && metadata.TickTickTasks.length > 0) {
-						const task1 = metadata.TickTickTasks[0];
-						const searchResult = await this.fileOperation?.searchFilepathsByTaskidInVault(task1.taskId);
-						if (searchResult) {
-							log.debug(`File ${dbFile.path} moved to ${searchResult}. Updating DB.`);
-							await this.cacheOperation.updateRenamedFilePath(dbFile.path, searchResult);
-							continue;
-						}
-					}
-					log.debug(`Removing DB entry for missing file: ${dbFile.path}`);
-					await this.cacheOperation.deleteFilepathFromMetadata(dbFile.path);
 				}
 			}
 

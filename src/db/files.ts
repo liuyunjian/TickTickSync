@@ -11,11 +11,11 @@ export async function upsertFile(path: string, defaultProjectId?: string) {
 }
 
 export async function getFile(path: string): Promise<LocalFile | undefined> {
-	return await db.files.get(path);
+	return db.files.get(path);
 }
 
 export async function getAllFiles(): Promise<LocalFile[]> {
-	return await db.files.toArray();
+	return db.files.toArray();
 }
 
 export async function deleteFile(path: string) {
