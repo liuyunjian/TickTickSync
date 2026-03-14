@@ -124,8 +124,8 @@ export const REGEX = {
 		REMOVE_CHECKBOX: /^(-|\*)\s+\[(x|X| )\]\s/,
 		REMOVE_CHECKBOX_WITH_INDENTATION: /^([ \t]*)?(-|\*)\s+\[(x|X| )\]\s/,
 		REMOVE_TickTick_LINK: /\[link\]\(.*?\)/,
-		// Remove [fatherLink](...) and [fatherPage](...) injected by the plugin for detached subtasks
-		REMOVE_FATHER_LINKS: /\[(fatherLink|fatherPage)\]\([^)]*\)/g
+		// Remove [fatherLink](...) injected by the plugin for subtasks with a parent
+		REMOVE_FATHER_LINKS: /\[fatherLink\]\([^)]*\)/g
 	}, //todo: this and remove_tags are redundant. Probably some of the other stuff to. Rationalize this lot.
 	ALL_TAGS: tag_regex,
 	TASK_CHECKBOX_CHECKED: /- \[(x|X)\] /,
@@ -194,20 +194,20 @@ export class TaskParser {
 			resultLine = this.addItems(resultLine, task.items, numTabs);
 		}
 
-		// If this task has a parent, append fatherLink and fatherPage for easy cross-file navigation.
-		// This only happens when the subtask lives in a different file from its parent
-		// (i.e. the user previously wrote the subtask in a custom file, and later re-parented it in TickTick).
-		resultLine = await this.addFatherLinks(task, numTabs, resultLine);
+		// If this task has a parent in TickTick, append [fatherLink] for easy navigation to
+		// the parent task. This is added to ALL subtasks, regardless of file location.
+		// The link is refreshed on every sync to stay up-to-date.
+		resultLine = await this.addFatherLink(task, resultLine);
 
 		return resultLine;
 	}
 
 	/**
-	 * Appends [fatherLink](...) and [fatherPage](...) to a subtask's line if the parent lives
-	 * in a different Obsidian file. Links are updated on every sync because this runs on every
-	 * call to convertTaskToLine.
+	 * Appends [fatherLink](TickTick URL) to any subtask's line that has a parentId.
+	 * Uses the same URL format as the existing [link] (via createURL).
+	 * The link is updated on every sync because this runs on every call to convertTaskToLine.
 	 */
-	private async addFatherLinks(task: ITask, numTabs: number, resultLine: string): Promise<string> {
+	private async addFatherLink(task: ITask, resultLine: string): Promise<string> {
 		if (!task.parentId || task.parentId.length === 0) {
 			return resultLine;
 		}
@@ -217,23 +217,12 @@ export class TaskParser {
 			return resultLine;
 		}
 
-		// Only inject the links when subtask and parent are in different files.
-		const myFile = this.plugin.cacheOperation?.getFilepathForTask(task.id);
-		const parentFile = this.plugin.cacheOperation?.getFilepathForTask(task.parentId);
-		if (!myFile || !parentFile || myFile === parentFile) {
-			// Same file (or can't resolve) — no need for navigation links.
-			return resultLine;
-		}
+		// Build the TickTick web URL for the parent task, same format as the existing [link]
+		const fatherURL = this.createURL(parentTask.id, parentTask.projectId);
 
-		const baseURL = getSettings().baseURL;
-		const fatherTickTickURL = `${baseURL}task/${parentTask.id}?projectId=${parentTask.projectId}`;
-		const fatherObsidianURL = this.getObsidianUrlFromFilepath(parentFile);
-
+		// Strip any existing [fatherLink] first, then append the fresh one
 		resultLine = resultLine.replace(REGEX.TASK_CONTENT.REMOVE_FATHER_LINKS, '').trimEnd();
-		resultLine += ` [fatherLink](${fatherTickTickURL})`;
-		if (fatherObsidianURL) {
-			resultLine += ` [fatherPage](${fatherObsidianURL})`;
-		}
+		resultLine += ` [fatherLink](${fatherURL})`;
 
 		return resultLine;
 	}

@@ -23,7 +23,7 @@ export class FileOperation {
 	async completeTaskInTheFile(taskId: string) {
 		// Get the task file path
 		const currentTask = await this.plugin.cacheOperation?.loadTaskFromCacheID(taskId);
-		const filepath =  this.plugin.cacheOperation?.getFilepathForTask(taskId);
+		const filepath = this.plugin.cacheOperation?.getFilepathForTask(taskId);
 
 		// Get the file object and update the content
 		const file = this.app.vault.getAbstractFileByPath(filepath);
@@ -52,7 +52,7 @@ export class FileOperation {
 	async uncompleteTaskInTheFile(taskId: string) {
 		// Get the task file path
 		const currentTask = await this.plugin.cacheOperation?.loadTaskFromCacheID(taskId);
-		const filepath =  this.plugin.cacheOperation?.getFilepathForTask(taskId);
+		const filepath = this.plugin.cacheOperation?.getFilepathForTask(taskId);
 
 		// Get the file object and update the content
 		const file = this.app.vault.getAbstractFileByPath(filepath);
@@ -136,8 +136,8 @@ export class FileOperation {
 		}
 		//sort by project id and task id
 		tasks.sort((taskA, taskB) =>
-			(taskA.projectId.localeCompare(taskB.projectId) ||
-				taskA.id.localeCompare(taskB.id)));
+		(taskA.projectId.localeCompare(taskB.projectId) ||
+			taskA.id.localeCompare(taskB.id)));
 
 		const projectIds = [...new Set(tasks.map(task => task.projectId))];
 
@@ -146,44 +146,44 @@ export class FileOperation {
 			let taskFile: string | null | undefined = null;
 			let projectTasks = tasks.filter(task => task.projectId === projectId);
 
-				//If a task is in the default project, we need to find it on the file system.
-				// 1. Find file for each task
-				// 2. process the tasks by file.
-				const tasksForFiles: { file: string, tasks: ITask[] }[] = [];
-				const fileForDefaultProject = await this.plugin.cacheOperation?.getFilepathForProjectId(getSettings().defaultProjectId);
-				for (const task of projectTasks) {
-					if (task.parentId && task.parentId.length > 0) {
-						// First, check if this subtask already has its own historical file path.
-						// This prevents existing subtasks from being forcefully re-routed to their
-						// new parent's file when the parent changes (which would cause duplicate errors).
-						const ownFile = this.plugin.cacheOperation.getFilepathForTask(task.id);
-						if (ownFile) {
-							// Subtask has an existing location in Obsidian — keep it there.
-							taskFile = ownFile;
-						} else {
-							// Brand-new subtask: route it to its parent's file, as expected.
-							taskFile = this.plugin.cacheOperation.getFilepathForTask(task.parentId);
-						}
+			//If a task is in the default project, we need to find it on the file system.
+			// 1. Find file for each task
+			// 2. process the tasks by file.
+			const tasksForFiles: { file: string, tasks: ITask[] }[] = [];
+			const fileForDefaultProject = await this.plugin.cacheOperation?.getFilepathForProjectId(getSettings().defaultProjectId);
+			for (const task of projectTasks) {
+				if (task.parentId && task.parentId.length > 0) {
+					// First, check if this subtask already has its own historical file path.
+					// This prevents existing subtasks from being forcefully re-routed to their
+					// new parent's file when the parent changes (which would cause duplicate errors).
+					const ownFile = this.plugin.cacheOperation.getFilepathForTask(task.id);
+					if (ownFile) {
+						// Subtask has an existing location in Obsidian — keep it there.
+						taskFile = ownFile;
 					} else {
-						taskFile = this.plugin.cacheOperation.getFilepathForTask(task.id);
+						// Brand-new subtask: route it to its parent's file, as expected.
+						taskFile = this.plugin.cacheOperation.getFilepathForTask(task.parentId);
 					}
+				} else {
+					taskFile = this.plugin.cacheOperation.getFilepathForTask(task.id);
+				}
+				if (taskFile) {
+					this.addTaskToTFF(tasksForFiles, taskFile, task);
+				} else {
+					taskFile = await this.plugin.cacheOperation?.getFilepathForProjectId(task.projectId);
 					if (taskFile) {
 						this.addTaskToTFF(tasksForFiles, taskFile, task);
 					} else {
-						taskFile = await this.plugin.cacheOperation?.getFilepathForProjectId(task.projectId);
-						if(taskFile) {
-							this.addTaskToTFF(tasksForFiles, taskFile, task);
-						} else {
-							this.addTaskToTFF(tasksForFiles, fileForDefaultProject, task);
-						}
+						this.addTaskToTFF(tasksForFiles, fileForDefaultProject, task);
 					}
+				}
 
-				}
-				for (const { file, tasks } of tasksForFiles) {
-					//after redistributing the tasks, make sure they're still in parent/child order.
-					this.doTheSortMambo(tasks);
-					result = await this.synchronizeToFile(file, tasks, bUpdating);
-				}
+			}
+			for (const { file, tasks } of tasksForFiles) {
+				//after redistributing the tasks, make sure they're still in parent/child order.
+				this.doTheSortMambo(tasks);
+				result = await this.synchronizeToFile(file, tasks, bUpdating);
+			}
 
 			// Sleep for 1 second
 			if (result) {
@@ -346,7 +346,7 @@ export class FileOperation {
 		const taskId = task.id;
 		// Get the task file path
 
-		const filepath =  this.plugin.cacheOperation?.getFilepathForTask(taskId);
+		const filepath = this.plugin.cacheOperation?.getFilepathForTask(taskId);
 		const file = this.app.vault.getAbstractFileByPath(filepath);
 		if (filepath) {
 			await this.deleteTaskFromSpecificFile(file, task, false);
@@ -480,9 +480,22 @@ export class FileOperation {
 		for (const task of tasks) {
 			let numParentTabs = 0;
 			const parentID = task.parentId;
-			if (parentID) {
-				const parentTabs = fileMap.getNumParentTabs(parentID);
-				numParentTabs = parentTabs + 1;
+
+			// Check if this task already exists in the file
+			const existingIdx = fileMap.getTaskIndex(task.id);
+
+			if (existingIdx >= 0) {
+				// EXISTING task — always preserve its current indentation.
+				// We never recalculate indentation from parent relationships during updates.
+				numParentTabs = fileMap.getNumParentTabs(task.id);
+			} else if (parentID) {
+				// NEW task with a parent — indent under parent only if parent is in this file.
+				const parentIdx = fileMap.getTaskIndex(parentID);
+				if (parentIdx >= 0) {
+					const parentTabs = fileMap.getNumParentTabs(parentID);
+					numParentTabs = parentTabs + 1;
+				}
+				// If parent is not in this file, numParentTabs stays 0 (top-level).
 			}
 
 			let lineText = '';
@@ -642,7 +655,7 @@ export class FileOperation {
 
 
 	private async deleteTaskFromOldFile(oldTask: ITask, newTask: ITask, fileMap: FileMap) {
-		const oldFilePath =  this.plugin.cacheOperation?.getFilepathForTask(oldTask.id);
+		const oldFilePath = this.plugin.cacheOperation?.getFilepathForTask(oldTask.id);
 		log.debug('oldFilePath: ', oldFilePath);
 		if (!oldFilePath) {
 			let errmsg = `File not found for moved newTask:  ${newTask.id}, ${newTask.title}`;

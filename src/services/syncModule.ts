@@ -347,13 +347,14 @@ export class SyncMan {
 						const __ret = await this.checkForMoves(lineTask_ticktick_id, filepath);
 						projectMoved = __ret.projectMoved;
 						oldFilePath = __ret.oldFilePath;
-						const bParentchanged = (taskRecord.parentId ? taskRecord.parentId : '') != (savedTask.parentId ? savedTask.parentId : '');
-						if (!projectMoved && !bParentchanged) {
+						// NOTE: We intentionally do NOT check for parent-child changes here.
+						// Obsidian's indentation-based parentId must not override TickTick's truth.
+						// Parent-child relationships are only set during initial task creation.
+						if (!projectMoved) {
 							return false;
 						} else {
 							log.debug('Task Moved.', {
 								projectMoved: projectMoved,
-								parentChanged: bParentchanged,
 								taskrecordparentid: taskRecord.parentId,
 								savedtaskparentid: savedTask.parentId,
 								lineText: lineText,
@@ -426,7 +427,10 @@ export class SyncMan {
 			//any dates modified
 			const someDatesModified = this.plugin.dateMan?.areDatesChanged(lineTask, savedTask);
 
-			const parentIdModified = this.plugin.taskParser?.isParentIdChanged(lineTask, savedTask);
+			// NOTE: Disabled parent-child sync-back from Obsidian to TickTick.
+			// Obsidian's indentation is not authoritative for parent-child relationships.
+			// Parent-child is only determined at initial task creation.
+			const parentIdModified = false;
 			//check priority
 			const priorityModified = !(lineTask.priority == savedTask.priority);
 
@@ -505,6 +509,9 @@ export class SyncMan {
 				}
 
 
+				// parentIdModified is always false — Obsidian indentation does not
+				// override TickTick's parent-child relationships for existing tasks.
+				// The block below is kept for reference but will never execute.
 				if (parentIdModified) {
 
 					let oldParent = await this.plugin.cacheOperation?.loadTaskFromCacheID(savedTask.parentId);
