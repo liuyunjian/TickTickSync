@@ -153,7 +153,17 @@ export class FileOperation {
 				const fileForDefaultProject = await this.plugin.cacheOperation?.getFilepathForProjectId(getSettings().defaultProjectId);
 				for (const task of projectTasks) {
 					if (task.parentId && task.parentId.length > 0) {
-						taskFile = this.plugin.cacheOperation.getFilepathForTask(task.parentId);
+						// First, check if this subtask already has its own historical file path.
+						// This prevents existing subtasks from being forcefully re-routed to their
+						// new parent's file when the parent changes (which would cause duplicate errors).
+						const ownFile = this.plugin.cacheOperation.getFilepathForTask(task.id);
+						if (ownFile) {
+							// Subtask has an existing location in Obsidian — keep it there.
+							taskFile = ownFile;
+						} else {
+							// Brand-new subtask: route it to its parent's file, as expected.
+							taskFile = this.plugin.cacheOperation.getFilepathForTask(task.parentId);
+						}
 					} else {
 						taskFile = this.plugin.cacheOperation.getFilepathForTask(task.id);
 					}

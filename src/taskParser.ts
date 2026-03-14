@@ -123,7 +123,9 @@ export const REGEX = {
 		REMOVE_INLINE_METADATA: /%%\[\w+::\s*\w+\]%%/,
 		REMOVE_CHECKBOX: /^(-|\*)\s+\[(x|X| )\]\s/,
 		REMOVE_CHECKBOX_WITH_INDENTATION: /^([ \t]*)?(-|\*)\s+\[(x|X| )\]\s/,
-		REMOVE_TickTick_LINK: /\[link\]\(.*?\)/
+		REMOVE_TickTick_LINK: /\[link\]\(.*?\)/,
+		// Remove [fatherLink](...) and [fatherPage](...) injected by the plugin for detached subtasks
+		REMOVE_FATHER_LINKS: /\[(fatherLink|fatherPage)\]\([^)]*\)/g
 	}, //todo: this and remove_tags are redundant. Probably some of the other stuff to. Rationalize this lot.
 	ALL_TAGS: tag_regex,
 	TASK_CHECKBOX_CHECKED: /- \[(x|X)\] /,
@@ -192,6 +194,47 @@ export class TaskParser {
 			resultLine = this.addItems(resultLine, task.items, numTabs);
 		}
 
+		// If this task has a parent, append fatherLink and fatherPage for easy cross-file navigation.
+		// This only happens when the subtask lives in a different file from its parent
+		// (i.e. the user previously wrote the subtask in a custom file, and later re-parented it in TickTick).
+		resultLine = await this.addFatherLinks(task, numTabs, resultLine);
+
+		return resultLine;
+	}
+
+	/**
+	 * Appends [fatherLink](...) and [fatherPage](...) to a subtask's line if the parent lives
+	 * in a different Obsidian file. Links are updated on every sync because this runs on every
+	 * call to convertTaskToLine.
+	 */
+	private async addFatherLinks(task: ITask, numTabs: number, resultLine: string): Promise<string> {
+		if (!task.parentId || task.parentId.length === 0) {
+			return resultLine;
+		}
+
+		const parentTask = await this.plugin.cacheOperation?.loadTaskFromCacheID(task.parentId);
+		if (!parentTask) {
+			return resultLine;
+		}
+
+		// Only inject the links when subtask and parent are in different files.
+		const myFile = this.plugin.cacheOperation?.getFilepathForTask(task.id);
+		const parentFile = this.plugin.cacheOperation?.getFilepathForTask(task.parentId);
+		if (!myFile || !parentFile || myFile === parentFile) {
+			// Same file (or can't resolve) — no need for navigation links.
+			return resultLine;
+		}
+
+		const baseURL = getSettings().baseURL;
+		const fatherTickTickURL = `${baseURL}task/${parentTask.id}?projectId=${parentTask.projectId}`;
+		const fatherObsidianURL = this.getObsidianUrlFromFilepath(parentFile);
+
+		resultLine = resultLine.replace(REGEX.TASK_CONTENT.REMOVE_FATHER_LINKS, '').trimEnd();
+		resultLine += ` [fatherLink](${fatherTickTickURL})`;
+		if (fatherObsidianURL) {
+			resultLine += ` [fatherPage](${fatherObsidianURL})`;
+		}
+
 		return resultLine;
 	}
 
@@ -221,6 +264,8 @@ export class TaskParser {
 	getTaskContentFromLineText(lineText: string) {
 		let taskContent = lineText.replace(REGEX.TASK_CONTENT.REMOVE_INLINE_METADATA, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_TickTick_LINK, '')
+			// Strip [fatherLink](...) and [fatherPage](...) injected by plugin — prevents false titleChanged detection
+			.replace(REGEX.TASK_CONTENT.REMOVE_FATHER_LINKS, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_PRIORITY, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_TAGS, '')
 			.replace(REGEX.TASK_CONTENT.REMOVE_CHECKBOX, '')

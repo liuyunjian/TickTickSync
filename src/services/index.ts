@@ -100,6 +100,10 @@ export class TickTickService {
 
 	async synchronization() {
 		try {
+			if (Object.keys(getSettings().fileMetadata).length === 0) {
+				log.debug('File metadata is empty. Performing full vault scan before syncing.');
+				await this.checkDataBase();
+			}
 			const bChanged = await doWithLock(LOCK_TASKS, async () => {
 				return await this.syncTickTickToObsidian();
 			});
@@ -111,6 +115,12 @@ export class TickTickService {
 		} catch (error) {
 			log.error('Error on synchronization: ', error);
 		}
+	}
+
+	async fullScanAndSync() {
+		log.debug('Initiating full scan and sync.');
+		await this.checkDataBase();
+		await this.synchronization();
 	}
 
 	async saveProjectsToCache(): Promise<boolean> {
@@ -356,6 +366,48 @@ export class TickTickService {
 		return this.tickTickSync.syncTickTickToObsidian();
 	}
 
+	private async resolveDefaultFolderDuplicates(duplicates: Record<string, string[]>): Promise<boolean> {
+		let resolvedAny = false;
+		
+		for (const taskId in duplicates) {
+			const duplicateFiles = duplicates[taskId];
+			
+			// Try to find the TickTick task from cache
+			const cachedTask = await this.plugin.cacheOperation?.loadTaskFromCacheID(taskId);
+			if (!cachedTask || !cachedTask.projectId) {
+				continue;
+			}
+			
+			// Determine the default folder for its project
+			const defaultFolderPath = await this.plugin.cacheOperation?.getFilepathForProjectId(cachedTask.projectId);
+			if (!defaultFolderPath) {
+				continue;
+			}
+
+			// If the default file is among the duplicates, BUT there is at least one other file with the task
+			if (duplicateFiles.includes(defaultFolderPath) && duplicateFiles.length > 1) {
+				log.info(`Auto-resolving duplicate task ${taskId}. Removing from default project file: ${defaultFolderPath}`);
+				
+				const defaultFile = this.plugin.app.vault.getAbstractFileByPath(defaultFolderPath);
+				if (defaultFile && defaultFile instanceof TFile) {
+					try {
+						// 1. Physically delete the task text from the default document
+						await this.fileOperation?.deleteTaskFromSpecificFile(defaultFile, cachedTask, false);
+						// 2. Remove cache metadata for this specific duplicate instance to avoid further confusion string.
+						// The task data is still mapped to the custom user file in cache.
+						await this.plugin.cacheOperation?.deleteTaskFromCacheForFile(taskId, defaultFolderPath);
+						
+						resolvedAny = true;
+					} catch (error) {
+						log.error(`Failed to auto-resolve duplicate task ${taskId} from ${defaultFolderPath}`, error);
+					}
+				}
+			}
+		}
+		
+		return resolvedAny;
+	}
+
 	/**
 	 * @param bForceUpdate
 	 */
@@ -376,11 +428,22 @@ export class TickTickService {
 		//Check for duplicates before we do anything
 		try {
 			const result = this.cacheOperation?.checkForDuplicates(newFilesToSync);
+			
+			// Try to automatically resolve duplicates if possible
+			let duplicatesResolved = false;
 			if (result?.duplicates && (JSON.stringify(result.duplicates) != '{}')) {
+				duplicatesResolved = await this.resolveDefaultFolderDuplicates(result.duplicates);
+			}
+			
+			// If duplicates were found but we managed to resolve everything automatically, recheck
+			const recheckResult = duplicatesResolved ? 
+				this.cacheOperation?.checkForDuplicates(getSettings().fileMetadata) : result;
+			
+			if (recheckResult?.duplicates && (JSON.stringify(recheckResult.duplicates) != '{}')) {
 				let dupText = '';
-				for (const duplicatesKey in result.duplicates) {
+				for (const duplicatesKey in recheckResult.duplicates) {
 					dupText += 'Task: ' + duplicatesKey + '\nin files: \n';
-					result.duplicates[duplicatesKey].forEach(file => {
+					recheckResult.duplicates[duplicatesKey].forEach(file => {
 						dupText += file + '\n';
 					});
 				}
@@ -390,18 +453,29 @@ export class TickTickService {
 					'\nPlease fix manually. This causes unpredictable results' +
 					'\nPlease open an issue in the TickTickSync repository if you continue to see this issue.' +
 					'\n\nTo prevent data corruption. Sync is aborted.';
-				log.error('Metadata Duplicates: ', result.duplicates);
+				log.error('Metadata Duplicates: ', recheckResult.duplicates);
 				new Notice(msg, 5000);
 				return;
 			}
 
 
-			const duplicateTasksInFiles = await this.fileOperation?.checkForDuplicates(filesToSync, result?.taskIds);
+			const duplicateTasksInFiles = await this.fileOperation?.checkForDuplicates(filesToSync, recheckResult?.taskIds);
+			
+			// Try to automatically resolve file duplicates too
+			let fileDuplicatesResolved = false;
 			if (duplicateTasksInFiles && (JSON.stringify(duplicateTasksInFiles) != '{}')) {
+				fileDuplicatesResolved = await this.resolveDefaultFolderDuplicates(duplicateTasksInFiles);
+			}
+
+			// Recheck files if some were resolved
+			const remainingFileDuplicates = fileDuplicatesResolved ? 
+				await this.fileOperation?.checkForDuplicates(filesToSync, recheckResult?.taskIds) : duplicateTasksInFiles;
+
+			if (remainingFileDuplicates && (JSON.stringify(remainingFileDuplicates) != '{}')) {
 				let dupText = '';
-				for (let duplicateTasksInFilesKey in duplicateTasksInFiles) {
+				for (let duplicateTasksInFilesKey in remainingFileDuplicates) {
 					dupText += 'Task: ' + duplicateTasksInFilesKey + '\nFound in Files: \n';
-					duplicateTasksInFiles[duplicateTasksInFilesKey].forEach(file => {
+					remainingFileDuplicates[duplicateTasksInFilesKey].forEach(file => {
 						dupText += file + '\n';
 					});
 				}

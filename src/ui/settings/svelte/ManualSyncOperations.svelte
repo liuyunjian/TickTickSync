@@ -96,6 +96,22 @@
 
 		<div class="setting-item">
 			<div class="setting-item-info">
+				<div class="setting-item-name">Scan all files and sync</div>
+				<div class="setting-item-description">
+					Manually perform a full scan of all your vault files and fetch tasks before syncing. Useful for finding tasks you moved across files.
+				</div>
+			</div>
+			<div class="setting-item-control">
+				<button
+					class="mod-cta"
+					on:click={() => plugin.service.fullScanAndSync()}>
+					Scan and Sync
+				</button>
+			</div>
+		</div>
+
+		<div class="setting-item">
+			<div class="setting-item-info">
 				<div class="setting-item-name">Backup TickTick data</div>
 				<div class="setting-item-description">
 					Click to backup TickTick data. The backed-up files will be stored in the selected directory of the

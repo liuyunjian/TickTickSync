@@ -8,6 +8,7 @@
 	import NotesSettings from './NotesSettings.svelte';
 	import SyncControlSettings from './sections/SyncControlSettings.svelte';
 	import TasksSettings from './TasksSettings.svelte';
+	import OrphanedTasks from './OrphanedTasks.svelte';
 	import { getSettings } from '@/settings';
 
 
@@ -26,6 +27,7 @@
 		debug: 'Debug Options',
 		tasks: 'Task Links',
 		notes: 'Notes',
+		orphaned: 'Orphaned Tasks'
 	};
 </script>
 <div class="ticktick-settings">
@@ -57,6 +59,8 @@
 			<NotesSettings {plugin} />
 		{:else if activeTab === 'tasks'}
 			<TasksSettings {plugin} />
+		{:else if activeTab === 'orphaned'}
+			<OrphanedTasks {plugin} />
 		{/if}
 	</div>
 </div>

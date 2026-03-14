@@ -41,6 +41,7 @@ export interface ITickTickSyncSettings {
 		projectGroups: IProjectGroup[];
 		tasks: ITask[];
 	};
+	orphanedTasks: Array<{taskId: string, title: string, path: string}>;
 	//statistics: any;
 }
 
@@ -71,8 +72,10 @@ export const DEFAULT_SETTINGS: ITickTickSyncSettings = {
 	fileMetadata: {},
 	TickTickTasksData: {
 		projects: [],
+		projectGroups: [],
 		tasks: []
-	}
+	},
+	orphanedTasks: []
 
 	//statistics: {}
 };

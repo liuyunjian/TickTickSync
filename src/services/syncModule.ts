@@ -334,7 +334,7 @@ export class SyncMan {
 			//convertLineToTask has become a pretty expensive operation avoid it.
 			//let's see if the saved task has a lineHash.
 
-			const savedTask = this.plugin.cacheOperation?.loadTaskFromCacheID(lineTask_ticktick_id);
+			let savedTask = this.plugin.cacheOperation?.loadTaskFromCacheID(lineTask_ticktick_id);
 
 			let projectMoved = false;
 			let oldFilePath = '';
@@ -373,15 +373,30 @@ export class SyncMan {
 
 			const lineTask = await this.plugin.taskParser?.convertLineToTask(lineText, lineNumber, filepath, fileMap, taskRecord);
 
-			//TODO: Clean this up!
 			if (!savedTask) {
-				//Task in note, but not in cache. Assuming this would only happen in testing, delete the task from the note
-				log.error(`There is no task for ${lineText.substring(0, 10)} in the local cache. It will be deleted from file ${filepath}`);
+				//Task in note, but not in cache.
+				log.debug(`There is no task for ${lineText.substring(0, 10)} in the local cache. Checking TickTick API.`);
 
-				new Notice(`There is no task ${this.plugin.taskParser.getTaskContentFromLineText(lineText)} in the local cache. It will be deleted`);
-				const file = this.plugin.app.vault.getAbstractFileByPath(filepath);
-				await this.plugin.fileOperation?.deleteTaskFromSpecificFile(file, lineTask, true);
-				return false;
+				try {
+					const checkTask = await this.plugin.tickTickRestAPI?.getTaskById(lineTask_ticktick_id);
+					if (checkTask && !checkTask.deleted) {
+						// Task exists in TickTick. Add to local cache.
+						log.debug(`Task ${lineTask_ticktick_id} found in TickTick. Adding to cache.`);
+						await this.plugin.cacheOperation?.updateTaskToCache(checkTask, filepath);
+						savedTask = checkTask;
+						savedTask.dateHolder = this.plugin.dateMan?.getEmptydateHolder();
+						savedTask.lineHash = await this.plugin.taskParser?.getLineHash(newHash);
+					} else {
+						// It doesn't exist in TickTick, or it's deleted.
+						this.handleOrphanedTask(lineTask_ticktick_id, lineTask.title, filepath);
+						return false;
+					}
+				} catch (error) {
+					// 404 or other network error. Treat as orphaned.
+					log.warn(`Task ${lineTask_ticktick_id} not found in TickTick API:`, error);
+					this.handleOrphanedTask(lineTask_ticktick_id, lineTask.title, filepath);
+					return false;
+				}
 			} else {
 				//this should only be necessary for a while, until they update all tasks
 				if (!savedTask.dateHolder) {
@@ -1478,5 +1493,24 @@ export class SyncMan {
 			}
 		}
 		return null; // Return null if no task or item is found for the given line number
+	}
+
+	private handleOrphanedTask(taskId: string, title: string, filepath: string | undefined) {
+		const settings = getSettings();
+		if (!settings.orphanedTasks) {
+			settings.orphanedTasks = [];
+		}
+		
+		const path = filepath || "Unknown";
+
+		const isAlreadyOrphaned = settings.orphanedTasks.some(t => t.taskId === taskId);
+		if (!isAlreadyOrphaned) {
+			settings.orphanedTasks.push({ taskId, title, path });
+			updateSettings({ orphanedTasks: settings.orphanedTasks });
+			this.plugin.saveData(settings);
+
+			new Notice("发现孤立任务 (Orphaned Task)。请在 TickTickSync 设置中查看详情。");
+			log.warn(`Orphaned task discovered and saved: ${taskId} in ${path}`);
+		}
 	}
 }

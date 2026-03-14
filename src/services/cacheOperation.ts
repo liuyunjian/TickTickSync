@@ -40,7 +40,9 @@ export class CacheOperation {
 		// if (getSettings().debugMode) {
 		// 	log.debug("Adding task to : ", filepath)
 		// }
-		const metaData = await this.getFileMetadata(filepath, task.projectId);
+		// Do not pass the task's projectId to getFileMetadata.
+		// Doing so inadvertently sets the file's defaultProjectId if this is the first task scanned in the file.
+		const metaData = await this.getFileMetadata(filepath, null);
 		if (!metaData) {
 			return;
 		} //TODO uniform processing null value
@@ -556,6 +558,15 @@ export class CacheOperation {
 
 		} catch (error) {
 			log.error(`Error deleting task from Cache : ${error}`);
+		}
+	}
+
+	//Delete task from metadata for a specific file, BUT keep the task data in tasks.json
+	async deleteTaskFromCacheForFile(taskId: string, filePath: string) {
+		try {
+			await this.deleteTaskIdFromMetadata(filePath, taskId);
+		} catch (error) {
+			log.error(`Error deleting task metadata from specific file ${filePath}: ${error}`);
 		}
 	}
 
